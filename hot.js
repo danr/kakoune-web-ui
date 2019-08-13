@@ -1,29 +1,31 @@
 const NAMED_KEYS = {
-    'Enter': "ret",
-    'Tab': "tab",
-    'Backspace': "backspace",
-    'Delete': "del",
-    'Escape': "esc",
-    'ArrowUp': "up",
-    'ArrowDown': "down",
-    'ArrowLeft': "left",
-    'ArrowRight': "right",
-    'PageUp': "pageup",
-    'PageDown': "pagedown",
-    'Home': "home",
-    'End': "end",
-    'F1': "f1",
-    'F2': "f2",
-    'F3': "f3",
-    'F4': "f4",
-    'F5': "f5",
-    'F6': "f6",
-    'F7': "f7",
-    'F8': "f8",
-    'F9': "f9",
-    'F10': "f10",
-    'F11': "f11",
-    'F12': "f12",
+    Enter: "ret",
+    Tab: "tab",
+    Backspace: "backspace",
+    Delete: "del",
+    Escape: "esc",
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    PageUp: "pageup",
+    PageDown: "pagedown",
+    Home: "home",
+    End: "end",
+    F1: "f1",
+    F2: "f2",
+    F3: "f3",
+    F4: "f4",
+    F5: "f5",
+    F6: "f6",
+    F7: "f7",
+    F8: "f8",
+    F9: "f9",
+    F10: "f10",
+    F11: "f11",
+    F12: "f12",
+    '>': "gt",
+    '<': "lt",
 }
 
 const NAMED_COLOURS = {
@@ -70,7 +72,7 @@ right = document.getElementById('right')
 const tag = name => inner => `<${name}>${inner}</${name.split(' ')[0]}>`
 const div = tag('div')
 const styled = (style, s) => tag(`pre style="display:inline-block; margin: 0; ${style}"`)(s)
-const esc = s => s.replace('&', '&amp;').replace('<', '&lt;')
+const esc = s => s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 function row_markup(default_face) {
   return row => tag('div style="height:0.93em;"')(
@@ -78,7 +80,7 @@ function row_markup(default_face) {
       styled(`
         color:${color_to_css(cell.face.fg, default_face.fg)};
         background:${color_to_css(cell.face.bg, default_face.bg)}
-      `, esc(cell.contents))
+      `, esc(cell.contents.replace('\n', ' ')))
     ).join('')
   )
 }
@@ -87,8 +89,9 @@ kak_ws.onmessage = msg => {
   const {jsonrpc, ...w} = JSON.parse(msg.data)
   const handlers = {
     draw(lines, default_face, padding_face) {
-      // console.log(JSON.stringify(lines[0]))
+      console.log(JSON.stringify(lines[0]))
       main.style.background = color_to_css(default_face.bg, 'white')
+      document.body.style.background = color_to_css(padding_face.bg, 'white')
       main.innerHTML = lines.map(row_markup(default_face)).join('')
     },
     draw_status(status, mode, default_face) {
@@ -145,9 +148,9 @@ function mod(k, e) {
 
 window.onkeydown = e => {
   const key = e.key
-  if (key.length == 1) {
-    press(mod(key, e))
-  } else if (key in NAMED_KEYS) {
+  if (key in NAMED_KEYS) {
     press(mod(NAMED_KEYS[key], e))
+  } else if (key.length == 1) {
+    press(mod(key, e))
   }
 }
