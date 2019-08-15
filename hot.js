@@ -170,7 +170,7 @@ function activate(dom, websocket, state, scope) {
           const d = div('A little bit of extra text')
           now_lines[i].append(d)
         }
-        // MAGIC //
+        // MAG IC //
       })
       prev_lines = next_lines
     }
@@ -229,6 +229,51 @@ function activate(dom, websocket, state, scope) {
 
     prev = {...state}
   }
+
+  function diff(child, old) {
+    if (typeof child == 'string' || child instanceof Node) {
+      return child
+    } else {
+      return child(old)
+    }
+  }
+
+  // morphdom
+  // features to add: add data that was used to generate it or keys in arrays
+  // what about event listeners
+  function Tag(name, style, cls, ...children) {
+    return dom => {
+      function fresh() {
+        const elt = document.createElement(name)
+        style && (elt.style = style)
+        cls && (elt.className = cls)
+        children.forEach(child => elt.append(diff(child)))
+        return elt
+      }
+      if (!dom || dom.tagName.toUpperCase() != name.toUpperCase() || !(dom instanceof Element)) {
+        console.log('fresh', dom)
+        return fresh()
+      }
+      console.log('reuse')
+      if (dom.style != style) dom.style = style || ''
+      if (dom.className != cls) dom.className = cls || ''
+      while (dom.childNodes.length > children.length) {
+        main.removeChild(main.children.lastChild)
+      }
+      children.forEach((child, i) => diff(child, dom.childNodes[i]))
+      return dom
+    }
+  }
+
+  const one = Tag('div', undefined, 'boo', Tag('pre', undefined, undefined, 'hello'))(null)
+  console.log(one.outerHTML)
+
+  const two = Tag('div', 'background: black', undefined, 'hello')(one)
+  console.log(two.outerHTML)
+
+  const three = Tag('div', undefined, 'foo', 'hello')(one)
+  console.log(three.outerHTML)
+
 
   root.innerHTML = `
     <div id="main"></div>
