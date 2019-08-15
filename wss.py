@@ -34,7 +34,10 @@ async def kak_json_websocket(request):
 
     session = request.match_info['session']
     print(session)
-    kak = await asyncio.create_subprocess_exec('kak', '-c', str(session).rstrip(), '-ui', 'json', stdin=PIPE, stdout=PIPE)
+    kak = await asyncio.create_subprocess_exec(
+        'kak', '-c', str(session).rstrip(), '-ui', 'json',
+        stdin=PIPE, stdout=PIPE,
+        limit=1024*1024*1024) # 1GB
 
     async def fwd():
         async for message in kak.stdout:
@@ -49,7 +52,7 @@ async def kak_json_websocket(request):
     async for msg in websocket:
         if msg.type == aiohttp.WSMsgType.TEXT:
             msg = msg.data
-            print(msg.encode())
+            # print(msg.encode())
             kak.stdin.write(msg.encode())
 
     return web.Response()
@@ -60,12 +63,15 @@ def root(request):
     <script>
     window.hot_ws = new WebSocket('ws://' + window.location.host + '/hot')
     hot_ws.onmessage = msg => {
-        console.info('Reloading', msg.data)
+        console.info('Reloading')
         eval(msg.data)
     }
     </script>
     </head>
-    <body/></html>"""
+    <body>
+    <div id="root"></div>
+    </body>
+    </html>"""
     print('request', request)
     return web.Response(text=text, content_type='text/html')
 
