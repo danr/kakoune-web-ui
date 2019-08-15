@@ -51,8 +51,8 @@ function activate(dom, websocket, state, scope) {
     'magenta':        '#cc99cc',
     'bright-cyan':    '#d27b53',
   }
-  // use class cache
   function color_to_css(name, fallback) {
+    // use class cache?
     if (fallback && (name == 'default' || name == '')) {
       return color_to_css(fallback)
     } else if (name in NAMED_COLOURS) {
@@ -70,17 +70,19 @@ function activate(dom, websocket, state, scope) {
   }
 
   function tag(name, style, cls) {
-    style = style ? ` style="${style}"` : ''
-    cls = cls ? ` class="${cls}"` : ''
-    return inner => `<${name}${style}${cls}>${inner}</${name}>`
+    return children => {
+      const elt = document.createElement(name)
+      style && (elt.style = style)
+      cls && (elt.className = cls)
+      if (Array.isArray(children)) {
+        elt.append(...children)
+      } else if (children) {
+        elt.append(children)
+      }
+      return elt
+    }
   }
   const div = tag('div')
-  const esc = s => s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 
   function row_markup(default_face) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
@@ -89,139 +91,215 @@ function activate(dom, websocket, state, scope) {
     return row => div(
       ensure_nonempty(row).map(cell =>
         tag('pre', face_to_style(cell.face, default_face))(
-          esc(cell.contents.replace(/\n/g, ' ')))
-      ).join('')
+          cell.contents.replace(/\n/g, ' '))
+      )
     )
   }
 
+  function empty(node) {
+    // const new_node = node.cloneNode(false);
+    // node.parentNode.replaceChild(new_node, node)
+    // return new_node
+    node.innerHTML = ''
+  }
+
+  function set_children(node, ...children) {
+    empty(node)
+    children.forEach(child => node.append(child))
+  }
+
+  let prev = {}
+  let prev_lines = []
+
+  function eq(x, y) {
+    if (x === y || x === null || y === null) {
+      return x === y
+    } else if (Array.isArray(x) || Array.isArray(y)) {
+      return (
+        Array.isArray(x) &&
+        Array.isArray(y) &&
+        x.length == y.length &&
+        x.every((e, i) => eq(e, y[i]))
+      )
+    } else if (typeof x === 'object' && typeof y === 'object') {
+      const xk = Object.keys(x).sort()
+      const yk = Object.keys(y).sort()
+      return eq(xk, yk) && xk.every(k => eq(x[k], y[k]))
+    } else {
+      return false
+    }
+  }
+
   function refresh() {
+    function updated(p) {
+      const r = prev[p] != state[p] // !eq(prev[p], state[p])
+      // r && console.log(p, r)
+      return r
+    }
+    const $ = (q, ...ch) => {
+      const m = root.querySelector(q)
+      if (m) {
+        set_children(m, ...ch)
+      }
+      return m
+    }
     if (!state.draw || !state.status) {
       return
     }
     // console.log(JSON.stringify(lines[0]))
-    const main_style = `background: ${color_to_css(state.draw.default_face.bg, 'white')};`
-    root.style.background = color_to_css(state.draw.padding_face.bg, 'white')
-    // could diff this against the replay data to improve perf
-    const main_html = state.draw.lines.map(row_markup(state.draw.default_face)).join('')
-
-    const status_html = row_markup(state.status.default_face)(state.status.status_line)
-    const mode_line_html = row_markup(state.status.default_face)(state.status.mode_line)
-
-    let info_html = ''
-    let menu_html = ''
-    let menu_style = ''
-    let menu_inline_style = ''
-    let menu_inline_html = ''
-    let info_menu_inline_html = ''
-
-    const menu = state.menu
-    if (menu) {
-      const html = menu.items.slice(0, state.rows-3).map(
-        (item, i) => row_markup(
-          i == menu.selected ? menu.selected_face : menu.face
-        )(item)
-      ).join('')
-      menu_style = `background: ${color_to_css(menu.face.bg, 'white')}`
-      if (menu.style == 'prompt' || menu.style == 'search') {
-        menu_html = html
-      } else if (menu.style == 'inline') {
-        if (state.cell_height && state.cell_width) {
-          menu_inline_html = html
-          menu_inline_style = `
-            position: absolute;
-            top: ${state.cell_height * (1 + menu.anchor.line)}px;
-            left: ${state.cell_width * menu.anchor.column}px;
-          `
+    if (updated('draw')) {
+      const main_style = `background: ${color_to_css(state.draw.default_face.bg, 'white')};`
+      root.style.background = color_to_css(state.draw.padding_face.bg, 'white')
+      // diff this against the previous to improve perf
+      const next_lines = state.draw.lines
+      const main = root.querySelector('#main')
+      const now_lines = main.children
+      while (main.children.length > next_lines.length) {
+        main.removeChild(main.children.lastChild)
+      }
+      next_lines.forEach((next_line, i) => {
+        const now_line = now_lines[i]
+        const prev_line = prev_lines[i]
+        const make_line = () => row_markup(state.draw.default_face)(next_line)
+        if (!now_line) {
+          main.append(make_line())
+        } else if (!eq(prev_line, next_line)) {
+          main.replaceChild(make_line(), now_line)
         }
+        if (-1 != JSON.stringify(next_line).search('MA' + 'GIC')) {
+          const d = div('A little bit of extra text')
+          now_lines[i].append(d)
+        }
+        // MAGIC //
+      })
+      prev_lines = next_lines
+    }
+
+    if (updated('status')) {
+      $('#status', row_markup(state.status.default_face)(state.status.status_line))
+      $('#mode_line', row_markup(state.status.default_face)(state.status.mode_line))
+    }
+
+    if (updated('menu')) {
+      const menu = state.menu
+      if (!menu) {
+        $('#menu')
+        $('#menu_inline')
       } else {
-        console.warn('Unsupported menu style', style)
+        const html = menu.items.slice(0, state.rows-3).map(
+          (item, i) => row_markup(
+            i == menu.selected ? menu.selected_face : menu.face
+          )(item)
+        )
+        const menu_style = `background: ${color_to_css(menu.face.bg, 'white')};`
+        if (menu.style == 'prompt' || menu.style == 'search') {
+          $('#menu', ...html).style = menu_style
+        } else if (menu.style == 'inline') {
+          if (state.cell_height && state.cell_width) {
+            $('#menu_inline', ...html).style = `
+              ${menu_style}
+              position: absolute;
+              top: ${state.cell_height * (1 + menu.anchor.line)}px;
+              left: ${state.cell_width * menu.anchor.column}px;
+            `
+          }
+        } else {
+          console.warn('Unsupported menu style', menu.style)
+        }
       }
     }
 
-    const info = state.info
-    if (info) {
-      const pre = tag('pre', face_to_style(info.face))
-      if (info.style == 'prompt') {
-        info_html = pre(esc(info.content))
-      } else if (info.style == 'menuDoc') {
-        info_menu_inline_html = pre(esc(info.content))
-      } else {
-        console.warn('Unsupported info style', style)
+    if (updated('info')) {
+      const info = state.info
+      if (!info) {
+        $('#info')
+        $('#info_menu_inline')
+      } if (info) {
+        const pre = tag('pre')
+        const style = face_to_style(info.face)
+        if (info.style == 'prompt') {
+          $('#info', pre(info.content)).style = style
+        } else if (info.style == 'menuDoc') {
+          $('#info_menu_inline', pre(info.content)).style = style
+        } else {
+          console.warn('Unsupported info style', info.style)
+        }
       }
     }
 
-    root.innerHTML = `
-      <div class="main" style="${main_style}">${main_html}</div>
-      <div class="bar left">
-        <div class="left flex-column-left" style="z-index: 1;">
-          <div>
-            <div class="block-children" style="display: inline-block; ${menu_style}">${menu_html}</div>
-          </div>
-          <div>${status_html}</div>
-        </div>
-        <div class="right flex-column-right">
-          <div class="info">${info_html}</div>
-          <div>${mode_line_html}</div>
-        </div>
-      </div>
-      <div class="flex-row-top" style="${menu_inline_style}">
-        <div class="block-children" style="${menu_style}">${menu_inline_html}</div>
-        <div class="info">${info_menu_inline_html}</div>
-      </div>
-    `
+    prev = {...state}
   }
 
-  let style = document.querySelector('style') || document.body.appendChild(document.createElement('style'))
-
-  style.innerHTML = `
-    pre {
-      display: inline-block;
-      margin: 0;
-    }
-    .block-children * {
-      display: block;
-    }
-    .info {
-      padding: 6px;
-    }
-    body {
-      margin: 0;
-      font-size: 2em;
-    }
-    #root {
-      height: 100vh;
-      width: 100vw;
-      overflow: hidden;
-    }
-    .bar {
-      width: 100vw;
-    }
-    .left {
-      position: absolute;
-      left: 0;
-      bottom: 0;
-    }
-    .right {
-      position: absolute;
-      right: 0;
-      bottom: 0;
-    }
-    .flex-column-right {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-    }
-    .flex-column-left {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-begin;
-    }
-    .flex-row-top {
-      display: flex;
-      flex-direction: row;
-      align-items: flex-start;
-    }
+  root.innerHTML = `
+    <div id="main"></div>
+    <div class="bar left">
+      <div class="left flex-column-left" style="z-index: 1;">
+        <div>
+          <div id="menu" class="block-children" style="display: inline-block"></div>
+        </div>
+        <div id="status"></div>
+      </div>
+      <div class="right flex-column-right">
+        <div id="info" class="info"></div>
+        <div id="mode_line"></div>
+      </div>
+    </div>
+    <div id="inline" class="flex-row-top">
+      <div id="menu_inline" class="block-children"></div>
+      <div id="info_menu_inline" class="info"></div>
+    </div>
+    <style>
+      pre {
+        display: inline-block;
+        margin: 0;
+      }
+      .block-children * {
+        display: block;
+      }
+      .info {
+        padding: 6px;
+      }
+      body {
+        margin: 0;
+        font-size: 2em;
+      }
+      #root {
+        height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+      }
+      .bar {
+        width: 100vw;
+      }
+      .left {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+      }
+      .right {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+      }
+      .flex-column-right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+      .flex-column-left {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-begin;
+      }
+      .flex-row-top {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+      }
+    </style>
   `
+
+  refresh()
 
   const handlers = {
     draw(lines, default_face, padding_face) {
@@ -246,7 +324,7 @@ function activate(dom, websocket, state, scope) {
       state.cursor = {mode, coord}
     },
     menu_select(selected) {
-      state.menu.selected = selected
+      state.menu = {...state.menu, selected}
     },
     refresh() {
       window.requestAnimationFrame(refresh)
@@ -274,6 +352,7 @@ function activate(dom, websocket, state, scope) {
     if (e.altKey) s = 'a-' + s;
     if (e.ctrlKey) s = 'c-' + s;
     if (s == 'c-i') s = 'tab';
+    if (e.shiftKey && s == 'tab') s = 's-tab';
     if (s == 'c-h') s = 'backspace';
     return `<${s}>`
   }
