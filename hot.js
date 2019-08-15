@@ -1,4 +1,5 @@
-function activate(dom, websocket, replay_data, scope) {
+function activate(dom, websocket, state, scope) {
+  'use strict';
 
   const NAMED_KEYS = {
       Enter: "ret",
@@ -68,59 +69,6 @@ function activate(dom, websocket, replay_data, scope) {
     `
   }
 
-  root.innerHTML = `
-    <div class="main"></div>
-    <div class="bar left">
-      <div class="left">
-        <div class="menu"></div>
-        <div class="status"></div>
-      </div>
-      <div class="right flex-column-right">
-        <div class="info"></div>
-        <div class="modeline"></div>
-      </div>
-    </div>
-    <style>
-      pre {
-        display: inline-block;
-        margin: 0;
-      }
-      body {
-        margin: 0;
-        font-size: 2em;
-      }
-      #root {
-        height: 100vh;
-        width: 100vw;
-        overflow: hidden;
-      }
-      .bar {
-        width: 100vw;
-      }
-      .left {
-        position: absolute;
-        left: 0;
-        bottom: 0;
-      }
-      .right {
-        position: absolute;
-        right: 0;
-        bottom: 0;
-      }
-      .flex-column-right {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-      }
-    </style>
-  `
-
-  const main = root.querySelector('.main')
-  const info = root.querySelector('.info')
-  const menu = root.querySelector('.menu')
-  const status = root.querySelector('.status')
-  const modeline = root.querySelector('.modeline')
-
   function tag(name, style, cls) {
     style = style ? ` style="${style}"` : ''
     cls = cls ? ` class="${cls}"` : ''
@@ -135,63 +83,188 @@ function activate(dom, websocket, replay_data, scope) {
     .replace(/'/g, '&#39;')
 
   function row_markup(default_face) {
+    const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
+    const is_empty = row => !row || row.length == 1 && !row[0].contents
+    const ensure_nonempty = row => is_empty(row) ? empty_row : row
     return row => div(
-      row.map(cell =>
+      ensure_nonempty(row).map(cell =>
         tag('pre', face_to_style(cell.face, default_face))(
           esc(cell.contents.replace(/\n/g, ' ')))
       ).join('')
     )
   }
 
-  const handlers = {
-    draw(lines, default_face, padding_face) {
-      // console.log(JSON.stringify(lines[0]))
-      main.style.background = color_to_css(default_face.bg, 'white')
-      root.style.background = color_to_css(padding_face.bg, 'white')
-      main.innerHTML = lines.map(row_markup(default_face)).join('')
-    },
-    draw_status(status_line, mode_line, default_face) {
-      status.innerHTML = row_markup(default_face)(status_line)
-      modeline.innerHTML = row_markup(default_face)(mode_line)
-    },
-    menu_show(items, anchor, selected_face, menu_face) {
-      menu.innerHTML = items.map(row_markup(menu_face)).join('')
-    },
-    menu_hide() {
-      menu.innerHTML = ''
-    },
-    info_show(title, content, anchor, face, style) {
-      console.log(arguments)
-      info.innerHTML = tag('pre', 'padding: 6px; ' +  face_to_style(face))(esc(content))
-    },
-    info_hide(title, content, anchor, face, style) {
-      info.innerHTML = ''
+  function refresh() {
+    if (!state.draw || !state.status) {
+      return
     }
+    // console.log(JSON.stringify(lines[0]))
+    const main_style = `background: ${color_to_css(state.draw.default_face.bg, 'white')};`
+    root.style.background = color_to_css(state.draw.padding_face.bg, 'white')
+    // could diff this against the replay data to improve perf
+    const main_html = state.draw.lines.map(row_markup(state.draw.default_face)).join('')
+
+    const status_html = row_markup(state.status.default_face)(state.status.status_line)
+    const mode_line_html = row_markup(state.status.default_face)(state.status.mode_line)
+
+    let info_html = ''
+    let menu_html = ''
+    let menu_style = ''
+    let menu_inline_style = ''
+    let menu_inline_html = ''
+    let info_menu_inline_html = ''
+
+    const menu = state.menu
+    if (menu) {
+      const html = menu.items.slice(0, state.rows-3).map(
+        (item, i) => row_markup(
+          i == menu.selected ? menu.selected_face : menu.face
+        )(item)
+      ).join('')
+      menu_style = `background: ${color_to_css(menu.face.bg, 'white')}`
+      if (menu.style == 'prompt' || menu.style == 'search') {
+        menu_html = html
+      } else if (menu.style == 'inline') {
+        if (state.cell_height && state.cell_width) {
+          menu_inline_html = html
+          menu_inline_style = `
+            position: absolute;
+            top: ${state.cell_height * (1 + menu.anchor.line)}px;
+            left: ${state.cell_width * menu.anchor.column}px;
+          `
+        }
+      } else {
+        console.warn('Unsupported menu style', style)
+      }
+    }
+
+    const info = state.info
+    if (info) {
+      const pre = tag('pre', face_to_style(info.face))
+      if (info.style == 'prompt') {
+        info_html = pre(esc(info.content))
+      } else if (info.style == 'menuDoc') {
+        info_menu_inline_html = pre(esc(info.content))
+      } else {
+        console.warn('Unsupported info style', style)
+      }
+    }
+
+    root.innerHTML = `
+      <div class="main" style="${main_style}">${main_html}</div>
+      <div class="bar left">
+        <div class="left flex-column-left" style="z-index: 1;">
+          <div>
+            <div class="block-children" style="display: inline-block; ${menu_style}">${menu_html}</div>
+          </div>
+          <div>${status_html}</div>
+        </div>
+        <div class="right flex-column-right">
+          <div class="info">${info_html}</div>
+          <div>${mode_line_html}</div>
+        </div>
+      </div>
+      <div class="flex-row-top" style="${menu_inline_style}">
+        <div class="block-children" style="${menu_style}">${menu_inline_html}</div>
+        <div class="info">${info_menu_inline_html}</div>
+      </div>
+    `
   }
 
-  const default_handler = (method) => (...params) => 0 // console.log(method, JSON.stringify(params))
+  let style = document.querySelector('style') || document.body.appendChild(document.createElement('style'))
+
+  style.innerHTML = `
+    pre {
+      display: inline-block;
+      margin: 0;
+    }
+    .block-children * {
+      display: block;
+    }
+    .info {
+      padding: 6px;
+    }
+    body {
+      margin: 0;
+      font-size: 2em;
+    }
+    #root {
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+    .bar {
+      width: 100vw;
+    }
+    .left {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+    }
+    .right {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+    }
+    .flex-column-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .flex-column-left {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-begin;
+    }
+    .flex-row-top {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+    }
+  `
+
+  const handlers = {
+    draw(lines, default_face, padding_face) {
+      state.draw = {lines, default_face, padding_face}
+    },
+    draw_status(status_line, mode_line, default_face) {
+      state.status = {status_line, mode_line, default_face}
+    },
+    menu_show(items, anchor, selected_face, face, style) {
+      state.menu = {items, anchor, selected_face, face, style, selected: -1}
+    },
+    menu_hide() {
+      state.menu = undefined
+    },
+    info_show(title, content, anchor, face, style) {
+      state.info = {title, content, anchor, face, style}
+    },
+    info_hide(title, content, anchor, face, style) {
+      state.info = undefined
+    },
+    set_cursor(mode, coord) {
+      state.cursor = {mode, coord}
+    },
+    menu_select(selected) {
+      state.menu.selected = selected
+    },
+    refresh() {
+      window.requestAnimationFrame(refresh)
+    },
+  }
+
+  const default_handler = (method) => (...params) => console.warn('unsupported', method, JSON.stringify(params))
 
   const handle_message = (method, params) => (handlers[method] || default_handler(method))(...params)
 
-  function replay_messages() {
-    replay_data.forEach((params, method) => {
-      handle_message(method, params)
-    })
-  }
-  replay_messages()
-
   websocket.onmessage = msg => {
     const {jsonrpc, ...w} = JSON.parse(msg.data)
-    replay_data.delete(w.method)
-    replay_data.set(w.method, w.params)
     handle_message(w.method, w.params)
   }
 
   function send(method, ...params) {
-    console.log(method, params)
-    websocket.send(
-      JSON.stringify(
-        { jsonrpc: "2.0",  method,  params }))
+    const msg = { jsonrpc: "2.0", method, params }
+    websocket.send(JSON.stringify(msg))
   }
 
   scope.send = send
@@ -216,17 +289,15 @@ function activate(dom, websocket, replay_data, scope) {
     return false
   }
 
-  let /*mutable*/ cell_height, cell_width
-
   function send_resize() {
-    const pre = main.querySelector('pre')
+    const pre = root.querySelector('.main pre')
     if (pre) {
-      cell_height = pre.clientHeight
-      cell_width = pre.clientWidth / pre.innerText.length
-      const rows = Math.floor(root.clientHeight / cell_height)
-      const cols = Math.floor(root.clientWidth / cell_width)
-      if (rows && cols) {
-        send("resize", rows, cols)
+      state.cell_height = pre.clientHeight
+      state.cell_width = pre.clientWidth / pre.innerText.length
+      state.rows = Math.floor(root.clientHeight / state.cell_height)
+      state.cols = Math.floor(root.clientWidth / state.cell_width)
+      if (state.rows && state.cols) {
+        send("resize", state.rows, state.cols)
       }
     }
   }
@@ -250,9 +321,9 @@ function activate(dom, websocket, replay_data, scope) {
   }
 
   function where(e) {
-    if (cell_height && cell_width) {
-      const row = Math.floor(e.clientY / cell_height)
-      const col = Math.floor(e.clientX / cell_width)
+    if (state.cell_height && state.cell_width) {
+      const row = Math.floor(e.clientY / state.cell_height)
+      const col = Math.floor(e.clientX / state.cell_width)
       return [row, col]
     }
   }
@@ -261,6 +332,7 @@ function activate(dom, websocket, replay_data, scope) {
   }
   mouseoff()
   root.onmousedown = e => {
+    if (e.button != 0) return // remove this to support right-click
     e.preventDefault()
     let pos
     if (pos = where(e)) {
@@ -275,11 +347,14 @@ function activate(dom, websocket, replay_data, scope) {
   }
   root.onmouseup = e => {
     e.preventDefault()
+    let pos
     if (pos = where(e)) {
       send("mouse", "release_" + button(e), ...pos)
     }
     mouseoff()
   }
+
+  return scope
 }
 
 const root = document.getElementById('root')
@@ -291,7 +366,7 @@ if (root) {
     } catch { }
     window.websocket = new WebSocket('ws://' + window.location.host + '/kak/5163')
   }
-  const replay_data = window.replay_data = (window.replay_data || new Map())
-  activate(root, websocket, replay_data, window)
+  const state = window.state = (window.state || {})
+  activate(root, websocket, state, window)
 }
 
