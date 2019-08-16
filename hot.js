@@ -288,61 +288,62 @@ function activate(dom, websocket, state) {
   }
 
   function refresh() {
-    if (!state.draw || !state.status) {
+    if (!state.main || !state.status) {
       return
     }
-    const main_style = css`background: ${color_to_css(state.draw.default_face.bg, 'white')}`
-    const root_style = css`background: ${color_to_css(state.draw.padding_face.bg, 'white')}`
-    const next_lines = state.draw.lines
-    const lines = next_lines.map(row_markup(state.draw.default_face))
-    const main = div(id`main`, main_style, ...lines)
 
-    const status = div(row_markup(state.status.default_face)(state.status.status_line))
-    const mode_line = div(row_markup(state.status.default_face)(state.status.mode_line))
+    const [lines, default_face, padding_face] = state.main
+    const main_style = css`background: ${color_to_css(default_face.bg, 'white')}`
+    const root_style = css`background: ${color_to_css(padding_face.bg, 'white')}`
+    const main = div(id`main`, main_style, ...lines.map(row_markup(default_face)))
+
+    const [status_line, status_mode_line, status_default_face] = state.status
+    const status    = div(row_markup(status_default_face)(status_line))
+    const mode_line = div(row_markup(status_default_face)(status_mode_line))
 
     let menu_inline, menu_prompt
     if (state.menu) {
-      const menu = state.menu
-      const html = menu.items.slice(0, state.rows-3).map(
+      const [items, anchor, selected_face, face, menu_style] = state.menu
+      const html = items.slice(0, state.rows-3).map(
         (item, i) => row_markup(
-          i == menu.selected ? menu.selected_face : menu.face
+          i == (state.selected || [-1])[0] ? selected_face : face
         )(item)
       )
-      const menu_style = css`background: ${color_to_css(menu.face.bg, 'white')}`
-      if (menu.style == 'prompt' || menu.style == 'search') {
+      const menu_css = css`background: ${color_to_css(face.bg, 'white')}`
+      if (menu_style == 'prompt' || menu_style == 'search') {
         menu_prompt = div(
           WideChildren,
           css`display: inline-block`,
-          menu_style,
+          menu_css,
           ...html)
-      } else if (menu.style == 'inline') {
+      } else if (menu_style == 'inline') {
         if (state.cell_height && state.cell_width) {
           menu_inline = div(
             WideChildren,
-            menu_style,
+            menu_css,
             ...html,
             style`
               position: absolute;
-              top: ${state.cell_height * (1 + menu.anchor.line)}px;
-              left: ${state.cell_width * menu.anchor.column}px;
+              top: ${state.cell_height * (1 + anchor.line)}px;
+              left: ${state.cell_width * anchor.column}px;
             `)
         }
       } else {
-        console.warn('Unsupported menu style', menu.style)
+        console.warn('Unsupported menu style', menu_style)
       }
     }
 
     let info_prompt, info_inline
     if (state.info) {
-      const info_style = face_to_style(state.info.face)
-      const html = div(css`padding: 6px`, info_style, pre(state.info.content))
-      if (state.info.style == 'prompt') {
+      const [title, content, anchor, face, info_style] = state.info
+      const html = div(css`padding: 6px`, face_to_style(face), pre(content))
+      if (info_style == 'prompt') {
         // TODO: if title is jseval! then just eval it
         info_prompt = html
-      } else if (state.info.style == 'menuDoc') {
+      } else if (info_style == 'menuDoc') {
         info_inline = html
       } else {
-        console.warn('Unsupported state.info style', state.info.style)
+        console.warn('Unsupported info style', info_style)
       }
     }
 
@@ -365,44 +366,35 @@ function activate(dom, websocket, state) {
 
   refresh()
 
-  const handlers = {
-    draw(lines, default_face, padding_face) {
-      state.draw = {lines, default_face, padding_face}
-    },
-    draw_status(status_line, mode_line, default_face) {
-      state.status = {status_line, mode_line, default_face}
-    },
-    menu_show(items, anchor, selected_face, face, style) {
-      state.menu = {items, anchor, selected_face, face, style, selected: -1}
-    },
-    menu_hide() {
-      state.menu = undefined
-    },
-    info_show(title, content, anchor, face, style) {
-      state.info = {title, content, anchor, face, style}
-    },
-    info_hide() {
-      state.info = undefined
-    },
-    set_cursor(mode, coord) {
-      state.cursor = {mode, coord}
-    },
-    menu_select(selected) {
-      state.menu = {...state.menu, selected}
-    },
-    refresh() {
-      window.requestAnimationFrame(refresh)
-      // refresh()
-    },
+  const shows = {
+    menu_show: 'menu',
+    info_show: 'info',
+    menu_select: 'selected',
+    draw: 'main',
+    draw_status: 'status'
   }
 
-  const default_handler = (method) => (...params) => console.warn('unsupported', method, JSON.stringify(params))
+  const hides = {
+    menu_hide: ['menu', 'selected'],
+    info_hide: ['info'],
+  }
 
-  const handle_message = (method, params) => (handlers[method] || default_handler(method))(...params)
+  const ignores = {
+    set_cursor: true
+  }
 
   websocket.onmessage = msg => {
-    const {jsonrpc, ...w} = JSON.parse(msg.data)
-    handle_message(w.method, w.params)
+    const {jsonrpc, method, params} = JSON.parse(msg.data)
+    if (method == 'refresh') {
+      window.requestAnimationFrame(refresh)
+    } else if (method in hides) {
+      hides[method].forEach(field => state[field] = undefined)
+    } else if (method in shows) {
+      state[shows[method]] = params
+    } else if (method in ignores) {
+    } else {
+      console.warn('unsupported', method, JSON.stringify(params))
+    }
   }
 
   function send(method, ...params) {
@@ -417,7 +409,7 @@ function activate(dom, websocket, state) {
     if (s == 'c-i') s = 'tab';
     if (e.shiftKey && s == 'tab') s = 's-tab';
     if (s == 'c-h') s = 'backspace';
-    return `<${s}>`
+    return s.length == 1 ? s : `<${s}>`
   }
 
   window.onkeydown = e => {
