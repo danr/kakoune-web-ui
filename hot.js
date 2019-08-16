@@ -2,66 +2,42 @@ const Tag = (function init_morphdom_module() {
   'use strict';
 
   // morphdom
-  // notable missing features: array keys, event listeners
-
-  const lens = (attr, quirks={}) => node => next => {
-    let now = quirks.get ? quirks.get(node) : node[attr]
-    now = now || ''
-    next = next || ''
-    if (now != next) {
-      if (next) {
-        // next = next.replace(/\s+/g, ' ').trim()
-        node[attr] = next
-        // if (next != node[attr]) {
-        //   console.log('set get violated', next, quirks.get ? quirks.get(node) : node[attr])
-        // }
-      } else {
-        if (quirks.remove) {
-          quirks.remove(node)
-        } else {
-          node.removeAttribute(attr)
-        }
-      }
-    }
-  }
-
-  const attr_lenses = {
-    style: lens('style', {get: node => node.style.cssText}),
-    class: lens('className', {remove: node => node.removeAttribute('class')}),
-    id: lens('id')
-  }
-
-  const attr_names = Object.keys(attr_lenses)
-  const is_attr = x => typeof x == 'object' && x.type
+  // notable missing features: array keys, event listeners, thunks
 
   return function Tag(name, ...children) {
     return function morph(dom) {
-      const attrs = {}
+      if (!dom || !(dom instanceof Element) || dom.tagName.toUpperCase() != name.toUpperCase()) {
+        dom = document.createElement(name)
+      }
+      const next_attrs = {}
       children = children.filter(function filter_child(child) {
-        if (is_attr(child)) {
-          const {type, value} = child
-          if (type in attrs) {
-            attrs[type] += ' ' + value
+        if (typeof child == 'object' && child.attr) {
+          const {attr, value} = child
+          if (attr in next_attrs) {
+            next_attrs[attr] += ' ' + value
           } else {
-            attrs[type] = value
+            next_attrs[attr] = value
           }
           return false
         }
         return typeof child != 'undefined'
       })
-      if (!dom || !(dom instanceof Element) || dom.tagName.toUpperCase() != name.toUpperCase()) {
-        const node = document.createElement(name)
-        attr_names.forEach(attr => {
-          const set = attr_lenses[attr](node)
-          set(attrs[attr])
-        })
-        children.forEach(child => node.append(typeof child == 'function' ? child() : child))
-        return node
+      for (const attr of dom.attributes) {
+        if (!(attr.name in next_attrs)) {
+          dom.removeAttribute(attr.name)
+        }
       }
-      attr_names.forEach(attr => {
-        const set = attr_lenses[attr](dom)
-        set(attrs[attr])
-      })
+      for (const attr in next_attrs) {
+        const now = dom.getAttribute(attr) || ''
+        const next = next_attrs[attr] || ''
+        if (now != next) {
+          if (!next) {
+            dom.removeAttribute(attr)
+          } else {
+            dom.setAttribute(attr, next)
+          }
+        }
+      }
       while (dom.childNodes.length > children.length) {
         dom.removeChild(dom.lastChild)
       }
@@ -81,7 +57,7 @@ const Tag = (function init_morphdom_module() {
           } else {
             next = child
           }
-          if (next !== prev) {
+          if (!prev.isEqualNode(next)) {
             dom.replaceChild(next, prev)
           }
         } else {
@@ -97,17 +73,16 @@ const MakeTag = name => (...children) => Tag(name, ...children)
 const div = MakeTag('div')
 const pre = MakeTag('pre')
 
-const MakeAttr = type => (value, ...more) => {
+const MakeAttr = attr => (value, ...more) => {
   if (typeof value != 'string') {
     value = value.map((s, i) => s + (more[i] || '')).join('')
   }
-  return {type, value}
+  return {attr, value}
 }
 
 const style = MakeAttr('style')
 const cls = MakeAttr('class')
 const id = MakeAttr('id')
-
 
 function test_morphdom() {
   const tests = [
@@ -228,7 +203,7 @@ function activate(dom, websocket, state) {
         sheet.innerHTML += value.replace(/&/g, _ => `.${name}`) + '\n'
       }
     }
-    return {type: 'class', value: generated.get(value)}
+    return {attr: 'class', value: generated.get(value)}
   }
 
   const Left = css`
@@ -304,7 +279,7 @@ function activate(dom, websocket, state) {
     let menu_inline, menu_prompt
     if (state.menu) {
       const [items, anchor, selected_face, face, menu_style] = state.menu
-      const html = items.slice(0, state.rows-3).map(
+      const dom = items.slice(0, state.rows-3).map(
         (item, i) => row_markup(
           i == (state.selected || [-1])[0] ? selected_face : face
         )(item)
@@ -315,13 +290,13 @@ function activate(dom, websocket, state) {
           WideChildren,
           css`display: inline-block`,
           menu_css,
-          ...html)
+          ...dom)
       } else if (menu_style == 'inline') {
         if (state.cell_height && state.cell_width) {
           menu_inline = div(
             WideChildren,
             menu_css,
-            ...html,
+            ...dom,
             style`
               position: absolute;
               top: ${state.cell_height * (1 + anchor.line)}px;
@@ -336,12 +311,16 @@ function activate(dom, websocket, state) {
     let info_prompt, info_inline
     if (state.info) {
       const [title, content, anchor, face, info_style] = state.info
-      const html = div(css`padding: 6px`, face_to_style(face), pre(content))
+      const dom = div(css`padding: 6px`, face_to_style(face), pre(content))
       if (info_style == 'prompt') {
-        // TODO: if title is jseval! then just eval it
-        info_prompt = html
+        if (title == 'jseval') {
+          // idea of Screwtape
+          info_prompt = eval(content)
+        } else {
+          info_prompt = dom
+        }
       } else if (info_style == 'menuDoc') {
-        info_inline = html
+        info_inline = dom
       } else {
         console.warn('Unsupported info style', info_style)
       }
@@ -351,9 +330,9 @@ function activate(dom, websocket, state) {
       id`root`,
       root_style,
       css`
-          height: 100vh;
-          width: 100vw;
-          overflow: hidden;
+        height: 100vh;
+        width: 100vw;
+        overflow: hidden;
       `,
       main,
       div(Left, css`width: 100vw`,
