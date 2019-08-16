@@ -10,7 +10,7 @@ const Tag = (function init_morphdom_module() {
     next = next || ''
     if (now != next) {
       if (next) {
-        next = next.replace(/\s+/g, ' ').trim()
+        // next = next.replace(/\s+/g, ' ').trim()
         node[attr] = next
         // if (next != node[attr]) {
         //   console.log('set get violated', next, quirks.get ? quirks.get(node) : node[attr])
@@ -291,8 +291,8 @@ function activate(dom, websocket, state) {
     if (!state.draw || !state.status) {
       return
     }
-    const main_style = css`background: ${color_to_css(state.draw.default_face.bg, 'white')};`
-    const root_style = css`background: ${color_to_css(state.draw.padding_face.bg, 'white')};`
+    const main_style = css`background: ${color_to_css(state.draw.default_face.bg, 'white')}`
+    const root_style = css`background: ${color_to_css(state.draw.padding_face.bg, 'white')}`
     const next_lines = state.draw.lines
     const lines = next_lines.map(row_markup(state.draw.default_face))
     const main = div(id`main`, main_style, ...lines)
@@ -308,11 +308,11 @@ function activate(dom, websocket, state) {
           i == menu.selected ? menu.selected_face : menu.face
         )(item)
       )
-      const menu_style = css`background: ${color_to_css(menu.face.bg, 'white')};`
+      const menu_style = css`background: ${color_to_css(menu.face.bg, 'white')}`
       if (menu.style == 'prompt' || menu.style == 'search') {
         menu_prompt = div(
           WideChildren,
-          css`display: inline-block;`,
+          css`display: inline-block`,
           menu_style,
           ...html)
       } else if (menu.style == 'inline') {
@@ -321,7 +321,7 @@ function activate(dom, websocket, state) {
             WideChildren,
             menu_style,
             ...html,
-            css`
+            style`
               position: absolute;
               top: ${state.cell_height * (1 + menu.anchor.line)}px;
               left: ${state.cell_width * menu.anchor.column}px;
@@ -335,7 +335,7 @@ function activate(dom, websocket, state) {
     let info_prompt, info_inline
     if (state.info) {
       const info_style = face_to_style(state.info.face)
-      const html = div(css`padding: 6px;`, info_style, pre(state.info.content))
+      const html = div(css`padding: 6px`, info_style, pre(state.info.content))
       if (state.info.style == 'prompt') {
         // TODO: if title is jseval! then just eval it
         info_prompt = html
@@ -356,9 +356,9 @@ function activate(dom, websocket, state) {
       `,
       main,
       div(Left, css`width: 100vw`,
-        div(Left, FlexColumnLeft, css`z-index: 1;`, menu_prompt, status),
+        div(Left, FlexColumnLeft, css`z-index: 1`, menu_prompt, status),
         div(Right, FlexColumnRight, info_prompt, mode_line)),
-      menu_inline && div(id`inline`, FlexRowTop, menu_inline, info_inline))
+      menu_inline && div(FlexRowTop, menu_inline, info_inline))
 
     morph(root)
   }
