@@ -1,3 +1,147 @@
+const Tag = (function init_morphdom_module() {
+  'use strict';
+
+  // morphdom
+  // features to add: add data that was used to generate it or keys in arrays
+  // what about event listeners
+
+  function diff(child, old) {
+    if (typeof child == 'function') {
+      return child(old)
+    } else if (typeof child == 'string') {
+      if (old instanceof Text && old.textContent == child) {
+        return old
+      } else {
+        return document.createTextNode(child)
+      }
+    } else {
+      return child
+    }
+  }
+
+  const lens = (attr, quirks={}) => node => next => {
+    let now = quirks.get ? quirks.get(node) : node[attr]
+    now = now || ''
+    next = next || ''
+    if (now != next) {
+      if (next) {
+        next = next.replace(/\s+/g, ' ').trim()
+        node[attr] = next
+        // if (next != node[attr]) {
+        //   console.log('set get violated', next, quirks.get ? quirks.get(node) : node[attr])
+        // }
+      } else {
+        if (quirks.remove) {
+          quirks.remove(node)
+          console.log('removed', attr, node[attr])
+        } else {
+          node.removeAttribute(attr)
+        }
+      }
+    }
+  }
+
+  const attr_lenses = {
+    style: lens('style', {get: node => node.style.cssText}),
+    class: lens('className', {remove: node => node.removeAttribute('class')}),
+    id: lens('id')
+  }
+
+  const attr_names = Object.keys(attr_lenses)
+  const is_attr = x => typeof x == 'object' && x.type
+
+  return function Tag(name, ...children) {
+    return function morph(dom) {
+      const attrs = {}
+      children = children.filter(function filter_child(child) {
+        if (is_attr(child)) {
+          const {type, value} = child
+          if (type in attrs) {
+            attrs[type] += ' ' + value
+          } else {
+            attrs[type] = value
+          }
+          return false
+        }
+        return typeof child != 'undefined'
+      })
+      if (!dom || !(dom instanceof Element) || dom.tagName.toUpperCase() != name.toUpperCase()) {
+        const node = document.createElement(name)
+        attr_names.forEach(attr => {
+          const set = attr_lenses[attr](node)
+          set(attrs[attr])
+        })
+        children.forEach(child => node.append(diff(child)))
+        return node
+      }
+      attr_names.forEach(attr => {
+        const set = attr_lenses[attr](dom)
+        set(attrs[attr])
+      })
+      while (dom.childNodes.length > children.length) {
+        dom.removeChild(dom.lastChild)
+      }
+      children.forEach(function morph_child(child, i) {
+        if (i < dom.childNodes.length) {
+          const prev = dom.childNodes[i]
+          const next = diff(child, prev)
+          if (next !== prev) {
+            dom.replaceChild(next, prev)
+          }
+        } else {
+          dom.append(diff(child))
+        }
+      })
+      return dom
+    }
+  }
+})();
+
+const MakeTag = name => (...children) => Tag(name, ...children)
+const div = MakeTag('div')
+const pre = MakeTag('pre')
+
+const MakeAttr = type => (value, ...more) => {
+  if (typeof value != 'string') {
+    value = value.map((s, i) => s + (more[i] || '')).join('')
+  }
+  return {type, value}
+}
+
+const style = MakeAttr('style')
+const cls = MakeAttr('class')
+const id = MakeAttr('id')
+
+
+function test_morphdom() {
+  const tests = [
+    Tag('div', cls`boo`, Tag('pre', id`heh`, 'hello')),
+    Tag('div', style`background: black`, 'hello'),
+    Tag('div', cls`foo`, 'hello', Tag('h1', 'heh')),
+    Tag('div', cls`foo`, 'hello', Tag('h2', 'heh')),
+    Tag('div', cls`foo`, 'hello', Tag('h2', 'meh')),
+    Tag('span', Tag('h1', 'a'), Tag('h2', 'b')),
+    Tag('span', Tag('h1', 'a'), Tag('h3', 'b')),
+    Tag('span', Tag('h2', 'a'), Tag('h3', 'b')),
+    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
+    Tag('span', cls`z`, id`g`, Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
+    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
+    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'boo')),
+    Tag('span', 'apa'),
+    Tag('span', Tag('div', 'apa')),
+    Tag('span', cls`a`),
+    Tag('span', cls`b`),
+  ]
+
+  let now = undefined
+  console.group()
+  tests.forEach((morph, i) => {
+    now = morph(now)
+    console.log(now.outerHTML)
+  })
+  console.groupEnd()
+}
+
 function activate(dom, websocket, state, scope) {
   'use strict';
 
@@ -51,6 +195,7 @@ function activate(dom, websocket, state, scope) {
     'magenta':        '#cc99cc',
     'bright-cyan':    '#d27b53',
   }
+
   function color_to_css(name, fallback) {
     // use class cache?
     if (fallback && (name == 'default' || name == '')) {
@@ -69,244 +214,108 @@ function activate(dom, websocket, state, scope) {
     `
   }
 
-  function tag(name, style, cls) {
-    return children => {
-      const elt = document.createElement(name)
-      style && (elt.style = style)
-      cls && (elt.className = cls)
-      if (Array.isArray(children)) {
-        elt.append(...children)
-      } else if (children) {
-        elt.append(children)
-      }
-      return elt
-    }
-  }
-  const div = tag('div')
-
   function row_markup(default_face) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
     return row => div(
-      ensure_nonempty(row).map(cell =>
-        tag('pre', face_to_style(cell.face, default_face))(
-          cell.contents.replace(/\n/g, ' '))
-      )
-    )
-  }
-
-  function empty(node) {
-    // const new_node = node.cloneNode(false);
-    // node.parentNode.replaceChild(new_node, node)
-    // return new_node
-    node.innerHTML = ''
-  }
-
-  function set_children(node, ...children) {
-    empty(node)
-    children.forEach(child => node.append(child))
-  }
-
-  let prev = {}
-  let prev_lines = []
-
-  function eq(x, y) {
-    if (x === y || x === null || y === null) {
-      return x === y
-    } else if (Array.isArray(x) || Array.isArray(y)) {
-      return (
-        Array.isArray(x) &&
-        Array.isArray(y) &&
-        x.length == y.length &&
-        x.every((e, i) => eq(e, y[i]))
-      )
-    } else if (typeof x === 'object' && typeof y === 'object') {
-      const xk = Object.keys(x).sort()
-      const yk = Object.keys(y).sort()
-      return eq(xk, yk) && xk.every(k => eq(x[k], y[k]))
-    } else {
-      return false
-    }
+      cls`flex-row-top`,
+      ...ensure_nonempty(row).map(cell =>
+        pre(
+          style(face_to_style(cell.face, default_face)),
+          cell.contents.replace(/\n/g, ' '))))
   }
 
   function refresh() {
-    function updated(p) {
-      const r = prev[p] != state[p] // !eq(prev[p], state[p])
-      // r && console.log(p, r)
-      return r
-    }
-    const $ = (q, ...ch) => {
-      const m = root.querySelector(q)
-      if (m) {
-        set_children(m, ...ch)
-      }
-      return m
-    }
     if (!state.draw || !state.status) {
       return
     }
     // console.log(JSON.stringify(lines[0]))
-    if (updated('draw')) {
-      const main_style = `background: ${color_to_css(state.draw.default_face.bg, 'white')};`
-      root.style.background = color_to_css(state.draw.padding_face.bg, 'white')
-      // diff this against the previous to improve perf
-      const next_lines = state.draw.lines
-      const main = root.querySelector('#main')
-      const now_lines = main.children
-      while (main.children.length > next_lines.length) {
-        main.removeChild(main.children.lastChild)
-      }
-      next_lines.forEach((next_line, i) => {
-        const now_line = now_lines[i]
-        const prev_line = prev_lines[i]
-        const make_line = () => row_markup(state.draw.default_face)(next_line)
-        if (!now_line) {
-          main.append(make_line())
-        } else if (!eq(prev_line, next_line)) {
-          main.replaceChild(make_line(), now_line)
-        }
-        if (-1 != JSON.stringify(next_line).search('MA' + 'GIC')) {
-          const d = div('A little bit of extra text')
-          now_lines[i].append(d)
-        }
-        // MAG IC //
-      })
-      prev_lines = next_lines
-    }
+    const main_style = style`background: ${color_to_css(state.draw.default_face.bg, 'white')};`
+    const root_style = style`background: ${color_to_css(state.draw.padding_face.bg, 'white')};`
+    const next_lines = state.draw.lines
+    const lines = next_lines.map(row_markup(state.draw.default_face))
+    const main = div(id`main`, main_style, ...lines)
 
-    if (updated('status')) {
-      $('#status', row_markup(state.status.default_face)(state.status.status_line))
-      $('#mode_line', row_markup(state.status.default_face)(state.status.mode_line))
-    }
+    const status = div(row_markup(state.status.default_face)(state.status.status_line))
+    const mode_line = div(row_markup(state.status.default_face)(state.status.mode_line))
 
-    if (updated('menu')) {
+    const padding = style`padding: 6px;`
+
+    let menu_inline, menu_prompt
+    if (state.menu) {
       const menu = state.menu
-      if (!menu) {
-        $('#menu')
-        $('#menu_inline')
-      } else {
-        const html = menu.items.slice(0, state.rows-3).map(
-          (item, i) => row_markup(
-            i == menu.selected ? menu.selected_face : menu.face
-          )(item)
-        )
-        const menu_style = `background: ${color_to_css(menu.face.bg, 'white')};`
-        if (menu.style == 'prompt' || menu.style == 'search') {
-          $('#menu', ...html).style = menu_style
-        } else if (menu.style == 'inline') {
-          if (state.cell_height && state.cell_width) {
-            $('#menu_inline', ...html).style = `
-              ${menu_style}
+      const html = menu.items.slice(0, state.rows-3).map(
+        (item, i) => row_markup(
+          i == menu.selected ? menu.selected_face : menu.face
+        )(item)
+      )
+      const menu_style = style`background: ${color_to_css(menu.face.bg, 'white')};`
+      if (menu.style == 'prompt' || menu.style == 'search') {
+        menu_prompt = div(
+          cls`wide-children`,
+          style`display: inline-block;`,
+          menu_style,
+          ...html)
+      } else if (menu.style == 'inline') {
+        if (state.cell_height && state.cell_width) {
+          menu_inline = div(
+            cls`wide-children`,
+            menu_style,
+            ...html,
+            style`
               position: absolute;
               top: ${state.cell_height * (1 + menu.anchor.line)}px;
               left: ${state.cell_width * menu.anchor.column}px;
-            `
-          }
-        } else {
-          console.warn('Unsupported menu style', menu.style)
+            `)
         }
+      } else {
+        console.warn('Unsupported menu style', menu.style)
       }
     }
 
-    if (updated('info')) {
-      const info = state.info
-      if (!info) {
-        $('#info')
-        $('#info_menu_inline')
-      } if (info) {
-        const pre = tag('pre')
-        const style = face_to_style(info.face)
-        if (info.style == 'prompt') {
-          $('#info', pre(info.content)).style = style
-        } else if (info.style == 'menuDoc') {
-          $('#info_menu_inline', pre(info.content)).style = style
-        } else {
-          console.warn('Unsupported info style', info.style)
-        }
+    let info_prompt, info_inline
+    if (state.info) {
+      const info_style = style(face_to_style(state.info.face))
+      const html = div(padding, info_style, pre(state.info.content))
+      if (state.info.style == 'prompt') {
+        // TODO: if title is jseval! then just eval it
+        info_prompt = html
+      } else if (state.info.style == 'menuDoc') {
+        info_inline = html
+      } else {
+        console.warn('Unsupported state.info style', state.info.style)
       }
     }
 
-    prev = {...state}
+    const morph = div(
+      id`root`,
+      root_style,
+      main,
+      div(cls`bar left`,
+        div(cls`left flex-column-left`, style`z-index: 1;`, menu_prompt, status),
+        div(cls`right flex-column-right`, info_prompt, mode_line)),
+      menu_inline && div(id`inline`, cls`flex-row-top`, menu_inline, info_inline))
+
+    morph(root)
   }
 
-  function diff(child, old) {
-    if (typeof child == 'string' || child instanceof Node) {
-      return child
-    } else {
-      return child(old)
-    }
-  }
+  const sheet = document.body.querySelector('style') || document.body.appendChild(document.createElement('style'))
 
-  // morphdom
-  // features to add: add data that was used to generate it or keys in arrays
-  // what about event listeners
-  function Tag(name, style, cls, ...children) {
-    return dom => {
-      function fresh() {
-        const elt = document.createElement(name)
-        style && (elt.style = style)
-        cls && (elt.className = cls)
-        children.forEach(child => elt.append(diff(child)))
-        return elt
-      }
-      if (!dom || dom.tagName.toUpperCase() != name.toUpperCase() || !(dom instanceof Element)) {
-        console.log('fresh', dom)
-        return fresh()
-      }
-      console.log('reuse')
-      if (dom.style != style) dom.style = style || ''
-      if (dom.className != cls) dom.className = cls || ''
-      while (dom.childNodes.length > children.length) {
-        main.removeChild(main.children.lastChild)
-      }
-      children.forEach((child, i) => diff(child, dom.childNodes[i]))
-      return dom
-    }
-  }
-
-  const one = Tag('div', undefined, 'boo', Tag('pre', undefined, undefined, 'hello'))(null)
-  console.log(one.outerHTML)
-
-  const two = Tag('div', 'background: black', undefined, 'hello')(one)
-  console.log(two.outerHTML)
-
-  const three = Tag('div', undefined, 'foo', 'hello')(one)
-  console.log(three.outerHTML)
-
-
-  root.innerHTML = `
-    <div id="main"></div>
-    <div class="bar left">
-      <div class="left flex-column-left" style="z-index: 1;">
-        <div>
-          <div id="menu" class="block-children" style="display: inline-block"></div>
-        </div>
-        <div id="status"></div>
-      </div>
-      <div class="right flex-column-right">
-        <div id="info" class="info"></div>
-        <div id="mode_line"></div>
-      </div>
-    </div>
-    <div id="inline" class="flex-row-top">
-      <div id="menu_inline" class="block-children"></div>
-      <div id="info_menu_inline" class="info"></div>
-    </div>
-    <style>
+  sheet.innerHTML = `
       pre {
-        display: inline-block;
         margin: 0;
       }
-      .block-children * {
-        display: block;
+      .wide-children * {
+        width: 100%;
       }
-      .info {
-        padding: 6px;
+      pre, body {
+        font-size: 1.4rem;
+        font-family: Consolas;
       }
       body {
         margin: 0;
-        font-size: 2em;
+        overflow: hidden;
       }
       #root {
         height: 100vh;
@@ -334,14 +343,13 @@ function activate(dom, websocket, state, scope) {
       .flex-column-left {
         display: flex;
         flex-direction: column;
-        align-items: flex-begin;
+        align-items: flex-start;
       }
       .flex-row-top {
         display: flex;
         flex-direction: row;
         align-items: flex-start;
       }
-    </style>
   `
 
   refresh()
@@ -362,7 +370,7 @@ function activate(dom, websocket, state, scope) {
     info_show(title, content, anchor, face, style) {
       state.info = {title, content, anchor, face, style}
     },
-    info_hide(title, content, anchor, face, style) {
+    info_hide() {
       state.info = undefined
     },
     set_cursor(mode, coord) {
@@ -373,6 +381,7 @@ function activate(dom, websocket, state, scope) {
     },
     refresh() {
       window.requestAnimationFrame(refresh)
+      // refresh()
     },
   }
 
@@ -414,7 +423,7 @@ function activate(dom, websocket, state, scope) {
   }
 
   function send_resize() {
-    const pre = root.querySelector('.main pre')
+    const pre = root.querySelector('#main pre')
     if (pre) {
       state.cell_height = pre.clientHeight
       state.cell_width = pre.clientWidth / pre.innerText.length
@@ -486,7 +495,9 @@ const root = document.getElementById('root')
 if (root) {
   if (typeof websocket == 'undefined' || websocket.readyState != websocket.OPEN) {
     try {
-      websocket.close()
+      if (typeof websocket != 'undefined') {
+        websocket.close()
+      }
     } catch { }
     window.websocket = new WebSocket('ws://' + window.location.host + '/kak/5163')
   }
