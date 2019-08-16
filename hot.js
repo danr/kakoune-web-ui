@@ -2,22 +2,7 @@ const Tag = (function init_morphdom_module() {
   'use strict';
 
   // morphdom
-  // features to add: add data that was used to generate it or keys in arrays
-  // what about event listeners
-
-  function diff(child, old) {
-    if (typeof child == 'function') {
-      return child(old)
-    } else if (typeof child == 'string') {
-      if (old instanceof Text && old.textContent == child) {
-        return old
-      } else {
-        return document.createTextNode(child)
-      }
-    } else {
-      return child
-    }
-  }
+  // notable missing features: array keys, event listeners
 
   const lens = (attr, quirks={}) => node => next => {
     let now = quirks.get ? quirks.get(node) : node[attr]
@@ -33,7 +18,6 @@ const Tag = (function init_morphdom_module() {
       } else {
         if (quirks.remove) {
           quirks.remove(node)
-          console.log('removed', attr, node[attr])
         } else {
           node.removeAttribute(attr)
         }
@@ -71,7 +55,7 @@ const Tag = (function init_morphdom_module() {
           const set = attr_lenses[attr](node)
           set(attrs[attr])
         })
-        children.forEach(child => node.append(diff(child)))
+        children.forEach(child => node.append(typeof child == 'function' ? child() : child))
         return node
       }
       attr_names.forEach(attr => {
@@ -81,17 +65,29 @@ const Tag = (function init_morphdom_module() {
       while (dom.childNodes.length > children.length) {
         dom.removeChild(dom.lastChild)
       }
-      children.forEach(function morph_child(child, i) {
+      for (let i = 0; i < children.length; ++i) {
+        const child = children[i]
         if (i < dom.childNodes.length) {
           const prev = dom.childNodes[i]
-          const next = diff(child, prev)
+          let next
+          if (typeof child == 'function') {
+            next = child(prev)
+          } else if (typeof child == 'string') {
+            if (prev instanceof Text && prev.textContent == child) {
+              next = prev
+            } else {
+              next = document.createTextNode(child)
+            }
+          } else {
+            next = child
+          }
           if (next !== prev) {
             dom.replaceChild(next, prev)
           }
         } else {
-          dom.append(diff(child))
+          dom.append(typeof child == 'function' ? child() : child)
         }
-      })
+      }
       return dom
     }
   }
@@ -142,38 +138,38 @@ function test_morphdom() {
   console.groupEnd()
 }
 
-function activate(dom, websocket, state, scope) {
+function activate(dom, websocket, state) {
   'use strict';
 
   const NAMED_KEYS = {
-      Enter: "ret",
-      Tab: "tab",
-      Backspace: "backspace",
-      Delete: "del",
-      Escape: "esc",
-      ArrowUp: "up",
-      ArrowDown: "down",
-      ArrowLeft: "left",
-      ArrowRight: "right",
-      PageUp: "pageup",
-      PageDown: "pagedown",
-      Home: "home",
-      End: "end",
-      F1: "f1",
-      F2: "f2",
-      F3: "f3",
-      F4: "f4",
-      F5: "f5",
-      F6: "f6",
-      F7: "f7",
-      F8: "f8",
-      F9: "f9",
-      F10: "f10",
-      F11: "f11",
-      F12: "f12",
-      '>': "gt",
-      '<': "lt",
-      '-': "minus",
+    Enter: "ret",
+    Tab: "tab",
+    Backspace: "backspace",
+    Delete: "del",
+    Escape: "esc",
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    PageUp: "pageup",
+    PageDown: "pagedown",
+    Home: "home",
+    End: "end",
+    F1: "f1",
+    F2: "f2",
+    F3: "f3",
+    F4: "f4",
+    F5: "f5",
+    F6: "f6",
+    F7: "f7",
+    F8: "f8",
+    F9: "f9",
+    F10: "f10",
+    F11: "f11",
+    F12: "f12",
+    '>': "gt",
+    '<': "lt",
+    '-': "minus",
   }
 
   // eighties
@@ -208,21 +204,86 @@ function activate(dom, websocket, state, scope) {
   }
 
   function face_to_style(face, default_face={}) {
-    return `
+    return css`
       color:${color_to_css(face.fg, default_face.fg)};
       background:${color_to_css(face.bg, default_face.bg)}
     `
   }
+
+  const sheet = document.body.querySelector('style') || document.body.appendChild(document.createElement('style'))
+  sheet.innerHTML = ''
+
+  const generated = new Map()
+
+  function css(value, ...more) {
+    if (typeof value != 'string') {
+      value = value.map((s, i) => s + (more[i] || '')).join('')
+    }
+    if (!generated.has(value)) {
+      const name = 'c' + generated.size // + '_' + value.trim().replace(/[^\w\d_-]+/g, '_')
+      generated.set(value, name)
+      if (-1 == value.search('{')) {
+        sheet.innerHTML += `.${name} {${value}}\n`
+      } else {
+        sheet.innerHTML += value.replace(/&/g, _ => `.${name}`) + '\n'
+      }
+    }
+    return {type: 'class', value: generated.get(value)}
+  }
+
+  const Left = css`
+          position: absolute;
+          left: 0;
+          bottom: 0;
+        `
+  const Right = css`
+          position: absolute;
+          right: 0;
+          bottom: 0;
+        `
+  const FlexColumnRight = css`
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+        `
+  const FlexColumnLeft = css`
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        `
+  const FlexRowTop = css`
+          display: flex;
+          flex-direction: row;
+          align-items: flex-start;
+        `
+  const WideChildren = css`
+          & * {
+            width: 100%;
+          }
+        `
+  css`
+    pre {
+      margin: 0;
+    }
+    pre, body {
+      font-size: 1.4rem;
+      font-family: Consolas;
+    }
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  `
 
   function row_markup(default_face) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
     return row => div(
-      cls`flex-row-top`,
+      FlexRowTop,
       ...ensure_nonempty(row).map(cell =>
         pre(
-          style(face_to_style(cell.face, default_face)),
+          face_to_style(cell.face, default_face),
           cell.contents.replace(/\n/g, ' '))))
   }
 
@@ -230,17 +291,14 @@ function activate(dom, websocket, state, scope) {
     if (!state.draw || !state.status) {
       return
     }
-    // console.log(JSON.stringify(lines[0]))
-    const main_style = style`background: ${color_to_css(state.draw.default_face.bg, 'white')};`
-    const root_style = style`background: ${color_to_css(state.draw.padding_face.bg, 'white')};`
+    const main_style = css`background: ${color_to_css(state.draw.default_face.bg, 'white')};`
+    const root_style = css`background: ${color_to_css(state.draw.padding_face.bg, 'white')};`
     const next_lines = state.draw.lines
     const lines = next_lines.map(row_markup(state.draw.default_face))
     const main = div(id`main`, main_style, ...lines)
 
     const status = div(row_markup(state.status.default_face)(state.status.status_line))
     const mode_line = div(row_markup(state.status.default_face)(state.status.mode_line))
-
-    const padding = style`padding: 6px;`
 
     let menu_inline, menu_prompt
     if (state.menu) {
@@ -250,20 +308,20 @@ function activate(dom, websocket, state, scope) {
           i == menu.selected ? menu.selected_face : menu.face
         )(item)
       )
-      const menu_style = style`background: ${color_to_css(menu.face.bg, 'white')};`
+      const menu_style = css`background: ${color_to_css(menu.face.bg, 'white')};`
       if (menu.style == 'prompt' || menu.style == 'search') {
         menu_prompt = div(
-          cls`wide-children`,
-          style`display: inline-block;`,
+          WideChildren,
+          css`display: inline-block;`,
           menu_style,
           ...html)
       } else if (menu.style == 'inline') {
         if (state.cell_height && state.cell_width) {
           menu_inline = div(
-            cls`wide-children`,
+            WideChildren,
             menu_style,
             ...html,
-            style`
+            css`
               position: absolute;
               top: ${state.cell_height * (1 + menu.anchor.line)}px;
               left: ${state.cell_width * menu.anchor.column}px;
@@ -276,8 +334,8 @@ function activate(dom, websocket, state, scope) {
 
     let info_prompt, info_inline
     if (state.info) {
-      const info_style = style(face_to_style(state.info.face))
-      const html = div(padding, info_style, pre(state.info.content))
+      const info_style = face_to_style(state.info.face)
+      const html = div(css`padding: 6px;`, info_style, pre(state.info.content))
       if (state.info.style == 'prompt') {
         // TODO: if title is jseval! then just eval it
         info_prompt = html
@@ -291,66 +349,19 @@ function activate(dom, websocket, state, scope) {
     const morph = div(
       id`root`,
       root_style,
+      css`
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+      `,
       main,
-      div(cls`bar left`,
-        div(cls`left flex-column-left`, style`z-index: 1;`, menu_prompt, status),
-        div(cls`right flex-column-right`, info_prompt, mode_line)),
-      menu_inline && div(id`inline`, cls`flex-row-top`, menu_inline, info_inline))
+      div(Left, css`width: 100vw`,
+        div(Left, FlexColumnLeft, css`z-index: 1;`, menu_prompt, status),
+        div(Right, FlexColumnRight, info_prompt, mode_line)),
+      menu_inline && div(id`inline`, FlexRowTop, menu_inline, info_inline))
 
     morph(root)
   }
-
-  const sheet = document.body.querySelector('style') || document.body.appendChild(document.createElement('style'))
-
-  sheet.innerHTML = `
-      pre {
-        margin: 0;
-      }
-      .wide-children * {
-        width: 100%;
-      }
-      pre, body {
-        font-size: 1.4rem;
-        font-family: Consolas;
-      }
-      body {
-        margin: 0;
-        overflow: hidden;
-      }
-      #root {
-        height: 100vh;
-        width: 100vw;
-        overflow: hidden;
-      }
-      .bar {
-        width: 100vw;
-      }
-      .left {
-        position: absolute;
-        left: 0;
-        bottom: 0;
-      }
-      .right {
-        position: absolute;
-        right: 0;
-        bottom: 0;
-      }
-      .flex-column-right {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-      }
-      .flex-column-left {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-      }
-      .flex-row-top {
-        display: flex;
-        flex-direction: row;
-        align-items: flex-start;
-      }
-  `
 
   refresh()
 
@@ -398,8 +409,6 @@ function activate(dom, websocket, state, scope) {
     const msg = { jsonrpc: "2.0", method, params }
     websocket.send(JSON.stringify(msg))
   }
-
-  scope.send = send
 
   function mod(k, e) {
     let s = k
@@ -486,8 +495,6 @@ function activate(dom, websocket, state, scope) {
     }
     mouseoff()
   }
-
-  return scope
 }
 
 const root = document.getElementById('root')
@@ -502,6 +509,6 @@ if (root) {
     window.websocket = new WebSocket('ws://' + window.location.host + '/kak/5163')
   }
   const state = window.state = (window.state || {})
-  activate(root, websocket, state, window)
+  activate(root, websocket, state)
 }
 
