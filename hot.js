@@ -4,48 +4,51 @@ const Tag = (function init_morphdom_module() {
   // morphdom
   // notable missing features: array keys, event listeners, thunks
 
-  return function Tag(name, ...children) {
-    return function morph(dom) {
-      if (!dom || !(dom instanceof Element) || dom.tagName.toUpperCase() != name.toUpperCase()) {
-        dom = document.createElement(name)
-      }
-      const next_attrs = {}
-      children = children.filter(function filter_child(child) {
-        if (typeof child == 'object' && child.attr) {
-          const {attr, value} = child
-          if (attr in next_attrs) {
-            next_attrs[attr] += ' ' + value
-          } else {
-            next_attrs[attr] = value
-          }
-          return false
+  const isElement = x => x instanceof Element
+
+  return function Tag(name, children) {
+
+    const next_attrs = {}
+    children = children.filter(function filter_child(child) {
+      const type = typeof child
+      if (type == 'object' && child.attr) {
+        const {attr, value} = child
+        if (attr in next_attrs) {
+          next_attrs[attr] += ' ' + value
+        } else {
+          next_attrs[attr] = value
         }
-        return typeof child != 'undefined'
-      })
-      for (const attr of dom.attributes) {
-        if (!(attr.name in next_attrs)) {
-          dom.removeAttribute(attr.name)
+        return false
+      } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
+        throw new Error('Child needs to be false, string, function or DOM Element')
+      }
+      return child
+    })
+
+    return function morph(elem) {
+      if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase()) {
+        elem = document.createElement(name)
+      }
+      for (const attr of elem.attributes) {
+        if (!next_attrs[attr.name]) {
+          elem.removeAttribute(attr.name)
         }
       }
       for (const attr in next_attrs) {
-        const now = dom.getAttribute(attr) || ''
+        const now = elem.getAttribute(attr) || ''
         const next = next_attrs[attr] || ''
-        if (now != next) {
-          if (!next) {
-            dom.removeAttribute(attr)
-          } else {
-            dom.setAttribute(attr, next)
-          }
+        if (now != next && next) {
+          elem.setAttribute(attr, next)
         }
       }
-      while (dom.childNodes.length > children.length) {
-        dom.removeChild(dom.lastChild)
+      while (elem.childNodes.length > children.length) {
+        elem.removeChild(elem.lastChild)
       }
       for (let i = 0; i < children.length; ++i) {
         const child = children[i]
-        if (i < dom.childNodes.length) {
-          const prev = dom.childNodes[i]
-          let next
+        if (i < elem.childNodes.length) {
+          const prev = elem.childNodes[i]
+          let next = child
           if (typeof child == 'function') {
             next = child(prev)
           } else if (typeof child == 'string') {
@@ -54,22 +57,20 @@ const Tag = (function init_morphdom_module() {
             } else {
               next = document.createTextNode(child)
             }
-          } else {
-            next = child
           }
           if (!prev.isEqualNode(next)) {
-            dom.replaceChild(next, prev)
+            elem.replaceChild(next, prev)
           }
         } else {
-          dom.append(typeof child == 'function' ? child() : child)
+          elem.append(typeof child == 'function' ? child() : child)
         }
       }
-      return dom
+      return elem
     }
   }
 })();
 
-const MakeTag = name => (...children) => Tag(name, ...children)
+const MakeTag = name => (...children) => Tag(name, children)
 const div = MakeTag('div')
 const pre = MakeTag('pre')
 
