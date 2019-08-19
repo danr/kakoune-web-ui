@@ -74,35 +74,42 @@ const MakeTag = name => (...children) => Tag(name, children)
 const div = MakeTag('div')
 const pre = MakeTag('pre')
 
-const MakeAttr = attr => (value, ...more) => {
-  if (typeof value != 'string') {
-    value = value.map((s, i) => s + (more[i] || '')).join('')
+function template_to_string(value, ...more) {
+  if (typeof value == 'string') {
+    return value
   }
-  return {attr, value}
+  return value.map((s, i) => s + (more[i] || '')).join('')
 }
+
+function forward(f, g) {
+  return (...args) => g(f(...args))
+}
+
+const MakeAttr = attr => forward(template_to_string, value => ({attr, value}))
 
 const style = MakeAttr('style')
 const cls = MakeAttr('class')
 const id = MakeAttr('id')
 
 function test_morphdom() {
+  const tag = (name, ...children) => Tag(name, children)
   const tests = [
-    Tag('div', cls`boo`, Tag('pre', id`heh`, 'hello')),
-    Tag('div', style`background: black`, 'hello'),
-    Tag('div', cls`foo`, 'hello', Tag('h1', 'heh')),
-    Tag('div', cls`foo`, 'hello', Tag('h2', 'heh')),
-    Tag('div', cls`foo`, 'hello', Tag('h2', 'meh')),
-    Tag('span', Tag('h1', 'a'), Tag('h2', 'b')),
-    Tag('span', Tag('h1', 'a'), Tag('h3', 'b')),
-    Tag('span', Tag('h2', 'a'), Tag('h3', 'b')),
-    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
-    Tag('span', cls`z`, id`g`, Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
-    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'b')),
-    Tag('span', Tag('h2', 'a'), 'zoo', Tag('h3', 'boo')),
-    Tag('span', 'apa'),
-    Tag('span', Tag('div', 'apa')),
-    Tag('span', cls`a`),
-    Tag('span', cls`b`),
+    tag('div', cls`boo`, tag('pre', id`heh`, 'hello')),
+    tag('div', style`background: black`, 'hello'),
+    tag('div', cls`foo`, 'hello', tag('h1', 'heh')),
+    tag('div', cls`foo`, 'hello', tag('h2', 'heh')),
+    tag('div', cls`foo`, 'hello', tag('h2', 'meh')),
+    tag('span', tag('h1', 'a'), tag('h2', 'b')),
+    tag('span', tag('h1', 'a'), tag('h3', 'b')),
+    tag('span', tag('h2', 'a'), tag('h3', 'b')),
+    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'b')),
+    tag('span', cls`z`, id`g`, tag('h2', 'a'), 'zoo', tag('h3', 'b')),
+    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'b')),
+    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'boo')),
+    tag('span', 'apa'),
+    tag('span', tag('div', 'apa')),
+    tag('span', cls`a`),
+    tag('span', cls`b`),
   ]
 
   let now = undefined
@@ -113,6 +120,7 @@ function test_morphdom() {
   })
   console.groupEnd()
 }
+// test_morphdom()
 
 function activate(dom, websocket, state) {
   'use strict';
@@ -179,32 +187,31 @@ function activate(dom, websocket, state) {
     }
   }
 
-  function face_to_style(face, default_face={}) {
-    return css`
-      color:${color_to_css(face.fg, default_face.fg)};
-      background:${color_to_css(face.bg, default_face.bg)}
-    `
-  }
+  state.sheet = ''
 
-  const sheet = document.body.querySelector('style') || document.body.appendChild(document.createElement('style'))
-  sheet.innerHTML = ''
+  state.generated = new Map()
 
-  const generated = new Map()
-
-  function css(value, ...more) {
-    if (typeof value != 'string') {
-      value = value.map((s, i) => s + (more[i] || '')).join('')
-    }
-    if (!generated.has(value)) {
-      const name = 'c' + generated.size // + '_' + value.trim().replace(/[^\w\d_-]+/g, '_')
-      generated.set(value, name)
-      if (-1 == value.search('{')) {
-        sheet.innerHTML += `.${name} {${value}}\n`
+  function generate_class(key, gen_code) {
+    if (!state.generated.has(key)) {
+      const code = gen_code()
+      const name = 'c' + state.generated.size // + '_' + code.trim().replace(/[^\w\d_-]+/g, '_')
+      state.generated.set(key, name)
+      if (-1 == code.search('{')) {
+        state.sheet += `.${name} {${code}}\n`
       } else {
-        sheet.innerHTML += value.replace(/&/g, _ => `.${name}`) + '\n'
+        state.sheet += code.replace(/&/g, _ => `.${name}`) + '\n'
       }
     }
-    return {attr: 'class', value: generated.get(value)}
+    return {attr: 'class', value: state.generated.get(key)}
+  }
+
+  const css = forward(template_to_string, s => generate_class(s, () => s))
+
+  function face_to_style(face, default_face={}) {
+    return generate_class(JSON.stringify([face, default_face]), () => `
+      color:${color_to_css(face.fg, default_face.fg)};
+      background:${color_to_css(face.bg, default_face.bg)}
+    `)
   }
 
   const Left = css`
@@ -263,15 +270,17 @@ function activate(dom, websocket, state) {
           cell.contents.replace(/\n/g, ' '))))
   }
 
+  function bg(face) {
+    return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
+  }
+
   function refresh() {
     if (!state.main || !state.status) {
       return
     }
 
     const [lines, default_face, padding_face] = state.main
-    const main_style = css`background: ${color_to_css(default_face.bg, 'white')}`
-    const root_style = css`background: ${color_to_css(padding_face.bg, 'white')}`
-    const main = div(id`main`, main_style, ...lines.map(row_markup(default_face)))
+    const main = div(id`main`, bg(default_face), ...lines.map(row_markup(default_face)))
 
     const [status_line, status_mode_line, status_default_face] = state.status
     const status    = div(row_markup(status_default_face)(status_line))
@@ -285,18 +294,17 @@ function activate(dom, websocket, state) {
           i == (state.selected || [-1])[0] ? selected_face : face
         )(item)
       )
-      const menu_css = css`background: ${color_to_css(face.bg, 'white')}`
       if (menu_style == 'prompt' || menu_style == 'search') {
         menu_prompt = div(
           WideChildren,
           css`display: inline-block`,
-          menu_css,
+          bg(face),
           ...dom)
       } else if (menu_style == 'inline') {
         if (state.cell_height && state.cell_width) {
           menu_inline = div(
             WideChildren,
-            menu_css,
+            bg(face),
             ...dom,
             style`
               position: absolute;
@@ -329,7 +337,7 @@ function activate(dom, websocket, state) {
 
     const morph = div(
       id`root`,
-      root_style,
+      bg(padding_face),
       css`
         height: 100vh;
         width: 100vw;
@@ -339,7 +347,9 @@ function activate(dom, websocket, state) {
       div(Left, css`width: 100vw`,
         div(Left, FlexColumnLeft, css`z-index: 1`, menu_prompt, status),
         div(Right, FlexColumnRight, info_prompt, mode_line)),
-      menu_inline && div(FlexRowTop, menu_inline, info_inline))
+      menu_inline && div(FlexRowTop, menu_inline, info_inline),
+      Tag('style', [state.sheet])
+    )
 
     morph(root)
   }
@@ -469,18 +479,37 @@ function activate(dom, websocket, state) {
   }
 }
 
-const root = document.getElementById('root')
+const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
+root.id = 'root'
 
-if (root) {
+;(k => {
   if (typeof websocket == 'undefined' || websocket.readyState != websocket.OPEN) {
     try {
       if (typeof websocket != 'undefined') {
         websocket.close()
       }
     } catch { }
-    window.websocket = new WebSocket('ws://' + window.location.host + '/kak/5163')
+    const xhr = new XMLHttpRequest()
+    xhr.open('GET', 'http://' + window.location.host + '/sessions')
+    xhr.responseType = 'json'
+    xhr.onload = function () {
+      if (xhr.readyState == 4) {
+        if (xhr.status === 200) {
+          const {sessions} = xhr.response
+          console.info('Sessions:', sessions)
+          window.websocket = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
+          k()
+        } else {
+          console.error(xhr.statusText)
+        }
+      }
+    }
+    xhr.send(null)
+  } else {
+    k()
   }
+})(() => {
   const state = window.state = (window.state || {})
   activate(root, websocket, state)
-}
+})
 

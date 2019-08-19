@@ -26,6 +26,10 @@ import aiohttp
 from aiohttp import web
 from asyncio.subprocess import PIPE
 
+app = web.Application()
+routes = web.RouteTableDef()
+
+@routes.get('/kak/{session}')
 async def kak_json_websocket(request):
     print('request', request)
     websocket = web.WebSocketResponse(compress=False)
@@ -54,26 +58,33 @@ async def kak_json_websocket(request):
             # print(msg.encode())
             kak.stdin.write(msg.encode())
 
-    return web.Response()
+    return websocket
 
+@routes.get('/sessions')
+async def kak_sessions(request):
+    print('request', request)
+    kak = await asyncio.create_subprocess_exec('kak', '-l', stdout=PIPE)
+    sessions = await kak.stdout.read()
+    await kak.wait()
+    return web.json_response({'sessions': sessions.decode().split()})
+
+@routes.get('/')
 def root(request):
     text="""
-    <html><head>
-    <script>
+    <html><head><script>
     window.hot_ws = new WebSocket('ws://' + window.location.host + '/hot')
-    hot_ws.onmessage = msg => {
+    hot_ws.onmessage = function (msg) {
+        'use strict';
         console.info('Reloading')
         eval(msg.data)
     }
-    </script>
-    </head>
-    <body>
-    <div id="root"></div>
-    </body>
+    </script></head>
+    <body></body>
     </html>"""
     print('request', request)
     return web.Response(text=text, content_type='text/html')
 
+@routes.get('/hot')
 async def hot_websocket(request):
     print('request', request)
     websocket = web.WebSocketResponse(compress=False)
@@ -91,12 +102,9 @@ async def hot_websocket(request):
         await watcher.get_event()
 
     watcher.close()
-    return web.Response()
+    return websocket
 
-app = web.Application()
-app.router.add_get('/kak/{session}', kak_json_websocket)
-app.router.add_get('/hot', hot_websocket)
-app.router.add_get('/', root)
+app.router.add_routes(routes)
 
 loop = asyncio.get_event_loop()
 if not loop.is_running():
