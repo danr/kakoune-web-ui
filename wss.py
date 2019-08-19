@@ -1,24 +1,5 @@
-# print(asyncio.get_event_loop().is_running())
-#
-# if 'ws' in globals():
-#     ws.ws_server.close()
-#
-# ws = websockets.serve(echo, "127.0.0.1", 8234)
-#
-# loop = asyncio.get_event_loop()
-# if loop.is_running():
-#     asyncio.ensure_future(ws, loop=loop)
-#     # ws = asyncio.ensure_future(
-# else:
-#     asyncio.get_event_loop().run_until_complete(ws)
-#     asyncio.get_event_loop().run_forever()
-#
-# ws.ws_server.is_serving()
-
 # !pip install aiohttp --user
 # !pip install aionotify --user
-# !git add wss.py
-# !git commit -m 'wss tinkering'
 
 import asyncio
 import aionotify

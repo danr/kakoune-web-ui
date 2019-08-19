@@ -1,74 +1,67 @@
-const Tag = (function init_morphdom_module() {
-  'use strict';
+const isElement = x => x instanceof Element
 
-  // morphdom
-  // notable missing features: array keys, event listeners, thunks
-
-  const isElement = x => x instanceof Element
-
-  return function Tag(name, children) {
-
-    const next_attrs = {}
-    children = children.filter(function filter_child(child) {
-      const type = typeof child
-      if (type == 'object' && child.attr) {
-        const {attr, value} = child
-        if (attr in next_attrs) {
-          next_attrs[attr] += ' ' + value
-        } else {
-          next_attrs[attr] = value
-        }
-        return false
-      } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
-        throw new Error('Child needs to be false, string, function or DOM Element')
+function Tag(name, children) {
+  const next_attrs = {}
+  children = children.filter(function filter_child(child) {
+    if (!child) return false
+    const type = typeof child
+    if (type == 'object' && child.attr) {
+      const {attr, value} = child
+      if (attr in next_attrs) {
+        next_attrs[attr] += ' ' + value
+      } else {
+        next_attrs[attr] = value
       }
-      return child
-    })
-
-    return function morph(elem) {
-      if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase()) {
-        elem = document.createElement(name)
-      }
-      for (const attr of elem.attributes) {
-        if (!next_attrs[attr.name]) {
-          elem.removeAttribute(attr.name)
-        }
-      }
-      for (const attr in next_attrs) {
-        const now = elem.getAttribute(attr) || ''
-        const next = next_attrs[attr] || ''
-        if (now != next && next) {
-          elem.setAttribute(attr, next)
-        }
-      }
-      while (elem.childNodes.length > children.length) {
-        elem.removeChild(elem.lastChild)
-      }
-      for (let i = 0; i < children.length; ++i) {
-        const child = children[i]
-        if (i < elem.childNodes.length) {
-          const prev = elem.childNodes[i]
-          let next = child
-          if (typeof child == 'function') {
-            next = child(prev)
-          } else if (typeof child == 'string') {
-            if (prev instanceof Text && prev.textContent == child) {
-              next = prev
-            } else {
-              next = document.createTextNode(child)
-            }
-          }
-          if (!prev.isEqualNode(next)) {
-            elem.replaceChild(next, prev)
-          }
-        } else {
-          elem.append(typeof child == 'function' ? child() : child)
-        }
-      }
-      return elem
+      return false
+    } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
+      throw new Error('Child needs to be false, string, function or DOM Element')
     }
+    return child
+  })
+
+  return function morph(elem) {
+    if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase()) {
+      elem = document.createElement(name)
+    }
+    for (const attr of elem.attributes) {
+      if (!next_attrs[attr.name]) {
+        elem.removeAttribute(attr.name)
+      }
+    }
+    for (const attr in next_attrs) {
+      const now = elem.getAttribute(attr) || ''
+      const next = next_attrs[attr] || ''
+      if (now != next && next) {
+        elem.setAttribute(attr, next)
+      }
+    }
+    while (elem.childNodes.length > children.length) {
+      elem.removeChild(elem.lastChild)
+    }
+    for (let i = 0; i < children.length; ++i) {
+      const child = children[i]
+      if (i < elem.childNodes.length) {
+        const prev = elem.childNodes[i]
+        let next = child
+        if (typeof child == 'function') {
+          next = child(prev)
+        } else if (typeof child == 'string') {
+          if (prev instanceof Text && prev.textContent == child) {
+            next = prev
+          } else {
+            next = document.createTextNode(child)
+          }
+        }
+        if (!prev.isEqualNode(next)) {
+          elem.replaceChild(next, prev)
+        }
+      } else {
+        elem.append(typeof child == 'function' ? child() : child)
+      }
+    }
+    return elem
   }
-})();
+}
 
 const MakeTag = name => (...children) => Tag(name, children)
 const div = MakeTag('div')
@@ -123,8 +116,6 @@ function test_morphdom() {
 // test_morphdom()
 
 function activate(dom, websocket, state) {
-  'use strict';
-
   const NAMED_KEYS = {
     Enter: "ret",
     Tab: "tab",
@@ -234,6 +225,11 @@ function activate(dom, websocket, state) {
           flex-direction: column;
           align-items: flex-start;
         `
+  const InlineFlexRowTop = css`
+          display: inline-flex;
+          flex-direction: row;
+          align-items: flex-start;
+        `
   const FlexRowTop = css`
           display: flex;
           flex-direction: row;
@@ -249,7 +245,7 @@ function activate(dom, websocket, state) {
       margin: 0;
     }
     pre, body {
-      font-size: 1.4rem;
+      font-size: 1.3rem;
       font-family: Consolas;
     }
     body {
@@ -258,29 +254,52 @@ function activate(dom, websocket, state) {
     }
   `
 
-  function row_markup(default_face) {
+  function row_markup(default_face, k=()=>[]) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
-    return row => div(
-      FlexRowTop,
-      ...ensure_nonempty(row).map(cell =>
-        pre(
-          face_to_style(cell.face, default_face),
-          cell.contents.replace(/\n/g, ' '))))
+    return (row, i) => div(
+      cls`line`,
+      div(
+        cls`content-block`,
+        div(cls`content-inline`,
+          InlineFlexRowTop,
+          ...ensure_nonempty(row).map(cell =>
+            pre(
+              face_to_style(cell.face, default_face),
+              cell.contents.replace(/\n/g, ' '))))),
+      ...(k(row, i) || []))
   }
 
   function bg(face) {
     return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
   }
 
+  const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
+
   function refresh() {
     if (!state.main || !state.status) {
       return
     }
 
+    const right_inline = node => [
+      FlexRowTop,
+      css`justify-content: space-between`,
+      css`& > .content-block { flex-grow: 1 }`,
+      div('hehehe', css`color:white; display:inline-block`)
+    ]
+
     const [lines, default_face, padding_face] = state.main
-    const main = div(id`main`, bg(default_face), ...lines.map(row_markup(default_face)))
+    const main = div(id`main`, bg(default_face), ...lines.map(row_markup(default_face,
+      (atoms, i) => atoms_text(atoms).search(/children/) != -1 &&
+        [pre(atoms_text(atoms), css`
+            color:white;
+            padding:5px; padding-left: 8px;
+            border-left: 2px ${color_to_css('blue')} solid;
+            font-family: 'Source Serif Pro';
+            font-size: 1.1em;
+          `)]
+    )))
 
     const [status_line, status_mode_line, status_default_face] = state.status
     const status    = div(row_markup(status_default_face)(status_line))
@@ -352,6 +371,55 @@ function activate(dom, websocket, state) {
     )
 
     morph(root)
+
+    function window_size() {
+      // console.time()
+      const next = {}
+      const lines = root.querySelectorAll('#main .line')
+      if (!lines) return
+      const root_rect = root.getBoundingClientRect()
+      next.columns = []
+      next.cell_widths = []
+      next.cell_heights = []
+      const H = lines.length
+      lines.forEach(function line_size(line, h) {
+        const block = line.querySelector('.content-block')
+        const inline = line.querySelector('.content-inline')
+        const line_rect = line.getBoundingClientRect()
+        const block_rect = block.getBoundingClientRect()
+        const inline_rect = inline.getBoundingClientRect()
+
+        next.cell_heights.push(inline_rect.height)
+        const cell_width = inline_rect.width / inline.textContent.length
+        next.cell_widths.push(cell_width)
+        next.columns.push(Math.floor(block_rect.width / cell_width))
+
+        if (block_rect.bottom <= root_rect.bottom) {
+          if (h == H - 1) {
+            const more = Math.floor((root_rect.bottom - line_rect.bottom) / block_rect.height)
+            if (more >= 0) {
+              next.rows = H + more
+            } else {
+              next.rows = h + 1
+            }
+          } else {
+            next.rows = h + 1
+          }
+        }
+      })
+      next.cols = Math.min(...next.columns)
+      const avg = xs => xs.reduce((x,y) => x + y) / xs.length
+      next.cell_width = avg(next.cell_widths)   // Math.min(...next.cell_widths)
+      next.cell_height = avg(next.cell_heights) // Math.min(...next.cell_heights)
+      // console.timeEnd()
+      if (next.cols != state.cols || next.rows != state.rows) {
+        Object.assign(state, next)
+        console.log('resize', state.rows, state.cols)
+        send("resize", state.rows, state.cols)
+      }
+    }
+
+    window_size()
   }
 
   refresh()
@@ -413,25 +481,13 @@ function activate(dom, websocket, state) {
     return false
   }
 
-  function send_resize() {
-    const pre = root.querySelector('#main pre')
-    if (pre) {
-      state.cell_height = pre.clientHeight
-      state.cell_width = pre.clientWidth / pre.innerText.length
-      state.rows = Math.floor(root.clientHeight / state.cell_height)
-      state.cols = Math.floor(root.clientWidth / state.cell_width)
-      if (state.rows && state.cols) {
-        send("resize", state.rows, state.cols)
-      }
-    }
-  }
-  send_resize()
-
-  window.onresize = send_resize
+    window.onresize = () => refresh()
 
   window.onmousewheel = e => {
     // e.preventDefault()
     if (!e.deltaX) {
+      // this is getting changed in kakoune 2359df0f
+      // send("scroll", e.deltaY)
       if (e.deltaY < 0) {
         send("mouse", "wheel_up", 0, 0)
       } else {
@@ -479,9 +535,6 @@ function activate(dom, websocket, state) {
   }
 }
 
-const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
-root.id = 'root'
-
 ;(k => {
   if (typeof websocket == 'undefined' || websocket.readyState != websocket.OPEN) {
     try {
@@ -509,6 +562,8 @@ root.id = 'root'
     k()
   }
 })(() => {
+  const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
+  root.id = 'root'
   const state = window.state = (window.state || {})
   activate(root, websocket, state)
 })
