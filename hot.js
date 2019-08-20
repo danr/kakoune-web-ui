@@ -44,8 +44,6 @@ function Thunk(key, create) {
     if (!elem || !isElement(elem) || elem.key != key) {
       elem = create()(elem)
       elem.key = key
-    } else {
-      console.log('skipping') // , key)
     }
     return elem
   }
@@ -200,7 +198,7 @@ function test_morphdom() {
 }
 // test_morphdom()
 
-function activate(dom, websocket, state) {
+function activate(root, websocket, state) {
   const NAMED_KEYS = {
     Enter: "ret",
     Tab: "tab",
@@ -355,47 +353,43 @@ function activate(dom, websocket, state) {
     {handler: 'mousemove', message: 'move'},
     {handler: 'mouseup', message: 'release_left'},
   ]
+  const mouse_handlers = (line, what_col) =>
+    (line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
+      if (!e.buttons || e.button) {
+        return
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      send("mouse", message, line, what_col(e))
+    }}))
 
-  function row_markup(default_face, line_extra=() => undefined, cell_extra=() => undefined) {
+
+  function row_markup(default_face, k=()=>[]) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
-    return (row, line) => {
-      let col = 0
-      return Thunk([row, line, default_face], () => div(
+    return (row, line) => ( // Thunk({row, line, default_face}, () =>
+      div(
         cls(Line),
         div(
           cls(ContentBlock),
-          ...(line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
-            if (e.buttons && e.button == 0) {
-              e.preventDefault()
-              send("mouse", message, line, atoms_text(row).length)
-            }
-          }})),
+          ...mouse_handlers(line, _ => atoms_text(row).length),
           div(cls(ContentInline),
             InlineFlexRowTop,
-            ...flat_map(ensure_nonempty(row), atom =>
-                str_map(atom.contents, char => {
-                  const my_col = col
-                  col++
-                  return (pre(
-                    face_to_style(atom.face, default_face),
-                    char == '\n' ? ' ' : char,
-                    ...(line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      if (e.buttons && e.button == 0) {
-                        send("mouse", message, line, my_col)
-                      }
-                    }})),
-                    ...(cell_extra(row, line, my_col) || []),
-                  ))
-                })))),
-              // put inline menu here
-        ...(line_extra(row, line) || []),
+            ...mouse_handlers(line, e => {
+              const node = e.currentTarget
+              const w = node.clientWidth / node.textContent.length // assuming constant width
+              return Math.floor(e.clientX / w)
+            }),
+            ...ensure_nonempty(row).map(cell =>
+              pre(
+                face_to_style(cell.face, default_face),
+                cell.contents.replace(/\n/g, ' ')
+              )))), // put inline menu here
+        ...(k(row, line) || []),
         // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(row, 2, 2))
-      ))
-    }
+      )
+    )
   }
 
   let rAF = k => window.requestAnimationFrame(k)
@@ -504,14 +498,11 @@ function activate(dom, websocket, state) {
     morph(root)
 
     function window_size() {
-      // console.time()
       const next = {}
       const lines = root.querySelectorAll(`#${Main} .${Line}`)
       if (!lines) return
       const root_rect = root.getBoundingClientRect()
       next.columns = []
-      // next.cell_widths = []
-      // next.cell_heights = []
       const H = lines.length
       lines.forEach(function line_size(line, h) {
         const block = line.querySelector('.' + ContentBlock)
@@ -520,9 +511,7 @@ function activate(dom, websocket, state) {
         const block_rect = block.getBoundingClientRect()
         const inline_rect = inline.getBoundingClientRect()
 
-        // next.cell_heights.push(inline_rect.height)
         const cell_width = inline_rect.width / inline.textContent.length
-        // next.cell_widths.push(cell_width)
         next.columns.push(Math.floor(block_rect.width / cell_width))
 
         if (block_rect.bottom <= root_rect.bottom) {
@@ -539,10 +528,6 @@ function activate(dom, websocket, state) {
         }
       })
       next.cols = Math.min(...next.columns)
-      // const avg = xs => xs.reduce((x,y) => x + y) / xs.length
-      // next.cell_width = avg(next.cell_widths)   // Math.min(...next.cell_widths)
-      // next.cell_height = avg(next.cell_heights) // Math.min(...next.cell_heights)
-      // console.timeEnd()
       if (next.cols != state.cols || next.rows != state.rows) {
         Object.assign(state, next)
         console.log('resize', state.rows, state.cols)
