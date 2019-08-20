@@ -1,7 +1,59 @@
 const isElement = x => x instanceof Element
 
+function str_map(s, k) {
+  const out = []
+  for (let i = 0; i < s.length; ++i) {
+    out.push(k(s[i], i))
+  }
+  return out
+}
+
+function str_map(s, k) {
+  const out = []
+  for (let i = 0; i < s.length; ++i) {
+    out.push(k(s[i], i))
+  }
+  return out
+}
+
+function str_forEach(s, k) {
+  for (let i = 0; i < s.length; ++i) {
+    k(s[i], i)
+  }
+}
+
+function flat_map(xs, k) {
+  const out = []
+  xs.forEach((x, i) => out.push(...k(x, i)))
+  return out
+}
+
+function writer(h) {
+  const out = []
+  h((...xs) => out.push(...xs))
+  return out
+}
+
+console.log(writer(w => (w(1), w(2))))
+
+const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
+
+function Thunk(key, create) {
+  key = JSON.stringify(key)
+  return function thunk(elem) {
+    if (!elem || !isElement(elem) || elem.key != key) {
+      elem = create()(elem)
+      elem.key = key
+    } else {
+      console.log('skipping') // , key)
+    }
+    return elem
+  }
+}
+
 function Tag(name, children) {
   const next_attrs = {}
+  const next_handlers = {}
   children = children.filter(function filter_child(child) {
     if (!child) return false
     const type = typeof child
@@ -11,6 +63,14 @@ function Tag(name, children) {
         next_attrs[attr] += ' ' + value
       } else {
         next_attrs[attr] = value
+      }
+      return false
+    } else if (type == 'object' && child.handler) {
+      const {handler, value} = child
+      if (handler in next_handlers) {
+        next_handlers[handler].push(value)
+      } else {
+        next_handlers[handler] = [value]
       }
       return false
     } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
@@ -35,6 +95,21 @@ function Tag(name, children) {
         elem.setAttribute(attr, next)
       }
     }
+    if (elem.handlers === undefined) {
+      elem.handlers = {}
+    }
+    for (const type in elem.handlers) {
+      if (!next_handlers[type]) {
+        elem.handlers[type] = undefined
+        elem['on' + type] = undefined
+      }
+    }
+    for (const type in next_handlers) {
+      if (!elem.handlers[type]) {
+        elem['on' + type] = e => e.currentTarget.handlers[type].forEach(h => h(e))
+      }
+      elem.handlers[type] = next_handlers[type]
+    }
     while (elem.childNodes.length > children.length) {
       elem.removeChild(elem.lastChild)
     }
@@ -52,7 +127,7 @@ function Tag(name, children) {
             next = document.createTextNode(child)
           }
         }
-        if (!prev.isEqualNode(next)) {
+        if (prev !== next) {
           elem.replaceChild(next, prev)
         }
       } else {
@@ -66,6 +141,8 @@ function Tag(name, children) {
 const MakeTag = name => (...children) => Tag(name, children)
 const div = MakeTag('div')
 const pre = MakeTag('pre')
+const code = MakeTag('code')
+const span = MakeTag('span')
 
 function template_to_string(value, ...more) {
   if (typeof value == 'string') {
@@ -83,6 +160,14 @@ const MakeAttr = attr => forward(template_to_string, value => ({attr, value}))
 const style = MakeAttr('style')
 const cls = MakeAttr('class')
 const id = MakeAttr('id')
+
+const Handler = handler => value => ({handler, value})
+
+const mousemove = Handler('mousemove')
+const mouseover = Handler('mouseover')
+const mousedown = Handler('mousedown')
+const mouseup   = Handler('mouseup')
+const click     = Handler('click')
 
 function test_morphdom() {
   const tag = (name, ...children) => Tag(name, children)
@@ -184,7 +269,7 @@ function activate(dom, websocket, state) {
 
   function generate_class(key, gen_code) {
     if (!state.generated.has(key)) {
-      const code = gen_code()
+      const code = gen_code().trim().replace(/\n\s*/g, '\n').replace(/[:{;]\s*/g, g => g[0])
       const name = 'c' + state.generated.size // + '_' + code.trim().replace(/[^\w\d_-]+/g, '_')
       state.generated.set(key, name)
       if (-1 == code.search('{')) {
@@ -197,6 +282,10 @@ function activate(dom, websocket, state) {
   }
 
   const css = forward(template_to_string, s => generate_class(s, () => s))
+
+  function bg(face) {
+    return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
+  }
 
   function face_to_style(face, default_face={}) {
     return generate_class(JSON.stringify([face, default_face]), () => `
@@ -245,7 +334,7 @@ function activate(dom, websocket, state) {
       margin: 0;
     }
     pre, body {
-      font-size: 1.3rem;
+      font-size: 1.0rem;
       font-family: Consolas;
     }
     body {
@@ -254,30 +343,69 @@ function activate(dom, websocket, state) {
     }
   `
 
-  function row_markup(default_face, k=()=>[]) {
+  const nonce = '-' + 'ABCXYZ'[((new Date).getTime() % 6)]
+  const ContentInline = 'content-inline' + nonce
+  const ContentBlock = 'content-block' + nonce
+  const DataLine = 'data-line' + nonce
+  const Main = 'main' + nonce
+  const Line = 'line' + nonce
+
+  const mouse = [
+    {handler: 'mousedown', message: 'press_left'},
+    {handler: 'mousemove', message: 'move'},
+    {handler: 'mouseup', message: 'release_left'},
+  ]
+
+  function row_markup(default_face, line_extra=() => undefined, cell_extra=() => undefined) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
-    return (row, i) => div(
-      cls`line`,
-      div(
-        cls`content-block`,
-        div(cls`content-inline`,
-          InlineFlexRowTop,
-          ...ensure_nonempty(row).map(cell =>
-            pre(
-              face_to_style(cell.face, default_face),
-              cell.contents.replace(/\n/g, ' '))))),
-      ...(k(row, i) || []))
+    return (row, line) => {
+      let col = 0
+      return Thunk([row, line, default_face], () => div(
+        cls(Line),
+        div(
+          cls(ContentBlock),
+          ...(line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
+            if (e.buttons && e.button == 0) {
+              e.preventDefault()
+              send("mouse", message, line, atoms_text(row).length)
+            }
+          }})),
+          div(cls(ContentInline),
+            InlineFlexRowTop,
+            ...flat_map(ensure_nonempty(row), atom =>
+                str_map(atom.contents, char => {
+                  const my_col = col
+                  col++
+                  return (pre(
+                    face_to_style(atom.face, default_face),
+                    char == '\n' ? ' ' : char,
+                    ...(line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      if (e.buttons && e.button == 0) {
+                        send("mouse", message, line, my_col)
+                      }
+                    }})),
+                    ...(cell_extra(row, line, my_col) || []),
+                  ))
+                })))),
+              // put inline menu here
+        ...(line_extra(row, line) || []),
+        // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(row, 2, 2))
+      ))
+    }
   }
 
-  function bg(face) {
-    return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
-  }
-
-  const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
+  let rAF = k => window.requestAnimationFrame(k)
 
   function refresh() {
+
+    rAF = k => window.requestAnimationFrame(k)
+
+    console.log(state.cursor && state.cursor[1])
+
     if (!state.main || !state.status) {
       return
     }
@@ -285,20 +413,23 @@ function activate(dom, websocket, state) {
     const right_inline = node => [
       FlexRowTop,
       css`justify-content: space-between`,
-      css`& > .content-block { flex-grow: 1 }`,
-      div('hehehe', css`color:white; display:inline-block`)
+      css`& > .${ContentBlock} { flex-grow: 1 }`,
+      node
     ]
 
+    // this is the magic
     const [lines, default_face, padding_face] = state.main
-    const main = div(id`main`, bg(default_face), ...lines.map(row_markup(default_face,
-      (atoms, i) => atoms_text(atoms).search(/children/) != -1 &&
-        [pre(atoms_text(atoms), css`
+    const main = div(id(Main), bg(default_face), ...lines.map(row_markup(default_face,
+      (atoms, i) => atoms && atoms[0].face.fg == '#000001' &&
+        right_inline(pre(atoms.map(atom => JSON.stringify(atom)).join('\n'), css`
             color:white;
             padding:5px; padding-left: 8px;
             border-left: 2px ${color_to_css('blue')} solid;
             font-family: 'Source Serif Pro';
+            max-height: 80%;
             font-size: 1.1em;
-          `)]
+            order:-1;
+          `))
     )))
 
     const [status_line, status_mode_line, status_default_face] = state.status
@@ -375,23 +506,23 @@ function activate(dom, websocket, state) {
     function window_size() {
       // console.time()
       const next = {}
-      const lines = root.querySelectorAll('#main .line')
+      const lines = root.querySelectorAll(`#${Main} .${Line}`)
       if (!lines) return
       const root_rect = root.getBoundingClientRect()
       next.columns = []
-      next.cell_widths = []
-      next.cell_heights = []
+      // next.cell_widths = []
+      // next.cell_heights = []
       const H = lines.length
       lines.forEach(function line_size(line, h) {
-        const block = line.querySelector('.content-block')
-        const inline = line.querySelector('.content-inline')
+        const block = line.querySelector('.' + ContentBlock)
+        const inline = line.querySelector('.' + ContentInline)
         const line_rect = line.getBoundingClientRect()
         const block_rect = block.getBoundingClientRect()
         const inline_rect = inline.getBoundingClientRect()
 
-        next.cell_heights.push(inline_rect.height)
+        // next.cell_heights.push(inline_rect.height)
         const cell_width = inline_rect.width / inline.textContent.length
-        next.cell_widths.push(cell_width)
+        // next.cell_widths.push(cell_width)
         next.columns.push(Math.floor(block_rect.width / cell_width))
 
         if (block_rect.bottom <= root_rect.bottom) {
@@ -408,9 +539,9 @@ function activate(dom, websocket, state) {
         }
       })
       next.cols = Math.min(...next.columns)
-      const avg = xs => xs.reduce((x,y) => x + y) / xs.length
-      next.cell_width = avg(next.cell_widths)   // Math.min(...next.cell_widths)
-      next.cell_height = avg(next.cell_heights) // Math.min(...next.cell_heights)
+      // const avg = xs => xs.reduce((x,y) => x + y) / xs.length
+      // next.cell_width = avg(next.cell_widths)   // Math.min(...next.cell_widths)
+      // next.cell_height = avg(next.cell_heights) // Math.min(...next.cell_heights)
       // console.timeEnd()
       if (next.cols != state.cols || next.rows != state.rows) {
         Object.assign(state, next)
@@ -429,7 +560,8 @@ function activate(dom, websocket, state) {
     info_show: 'info',
     menu_select: 'selected',
     draw: 'main',
-    draw_status: 'status'
+    draw_status: 'status',
+    set_cursor: 'cursor'
   }
 
   const hides = {
@@ -437,19 +569,16 @@ function activate(dom, websocket, state) {
     info_hide: ['info'],
   }
 
-  const ignores = {
-    set_cursor: true
-  }
-
   websocket.onmessage = msg => {
     const {jsonrpc, method, params} = JSON.parse(msg.data)
     if (method == 'refresh') {
-      window.requestAnimationFrame(refresh)
+      rAF(refresh)
+      rAF = x => 0
+      // window.requestAnimationFrame(refresh)
     } else if (method in hides) {
       hides[method].forEach(field => state[field] = undefined)
     } else if (method in shows) {
       state[shows[method]] = params
-    } else if (method in ignores) {
     } else {
       console.warn('unsupported', method, JSON.stringify(params))
     }
@@ -457,6 +586,7 @@ function activate(dom, websocket, state) {
 
   function send(method, ...params) {
     const msg = { jsonrpc: "2.0", method, params }
+    // console.log(method, ...params)
     websocket.send(JSON.stringify(msg))
   }
 
@@ -481,7 +611,7 @@ function activate(dom, websocket, state) {
     return false
   }
 
-    window.onresize = () => refresh()
+  window.onresize = () => refresh()
 
   window.onmousewheel = e => {
     // e.preventDefault()
@@ -496,15 +626,27 @@ function activate(dom, websocket, state) {
     }
   }
 
+  /*
   function mouseoff() {
     root.onmousemove = undefined
   }
 
   function where(e) {
-    if (state.cell_height && state.cell_width) {
-      const row = Math.floor(e.clientY / state.cell_height)
-      const col = Math.floor(e.clientX / state.cell_width)
-      return [row, col]
+    for (const node of e.path) {
+      if (!node.getAttribute) {
+        continue
+      }
+      const line = node.getAttribute(DataLine)
+      const inline = node.querySelector('.' + ContentInline)
+      if (line && inline) {
+        // assume constant text width
+        const x = e.clientX - node.offsetLeft
+        const w = inline.clientWidth / inline.textContent.length
+        console.log(inline.clientWidth, inline.textContent.length)
+        console.log(node.offsetLeft, e.clientX)
+        console.log(w, x, 'x/w', x / w)
+        return [Number(line), Math.floor(x / w)]
+      }
     }
   }
   function button(e) {
@@ -533,6 +675,7 @@ function activate(dom, websocket, state) {
     }
     mouseoff()
   }
+  */
 }
 
 ;(k => {
