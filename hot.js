@@ -8,14 +8,6 @@ function str_map(s, k) {
   return out
 }
 
-function str_map(s, k) {
-  const out = []
-  for (let i = 0; i < s.length; ++i) {
-    out.push(k(s[i], i))
-  }
-  return out
-}
-
 function str_forEach(s, k) {
   for (let i = 0; i < s.length; ++i) {
     k(s[i], i)
@@ -33,8 +25,6 @@ function writer(h) {
   h((...xs) => out.push(...xs))
   return out
 }
-
-console.log(writer(w => (w(1), w(2))))
 
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
 
@@ -368,7 +358,7 @@ function activate(root, websocket, state) {
     const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = row => !row || row.length == 1 && !row[0].contents
     const ensure_nonempty = row => is_empty(row) ? empty_row : row
-    return (row, line) => ( // Thunk({row, line, default_face}, () =>
+    return function atoms_markup(row, line) { return ( // Thunk({row, line, default_face}, () =>
       div(
         cls(Line),
         div(
@@ -378,18 +368,20 @@ function activate(root, websocket, state) {
             InlineFlexRowTop,
             ...mouse_handlers(line, e => {
               const node = e.currentTarget
+              const x = e.clientX - node.offsetLeft
               const w = node.clientWidth / node.textContent.length // assuming constant width
-              return Math.floor(e.clientX / w)
+              return 1 + Math.floor(x / w)
             }),
             ...ensure_nonempty(row).map(cell =>
               pre(
                 face_to_style(cell.face, default_face),
                 cell.contents.replace(/\n/g, ' ')
-              )))), // put inline menu here
+              )))
+            ), // put inline menu here
         ...(k(row, line) || []),
         // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(row, 2, 2))
       )
-    )
+    )}
   }
 
   let rAF = k => window.requestAnimationFrame(k)
@@ -512,7 +504,8 @@ function activate(root, websocket, state) {
         const inline_rect = inline.getBoundingClientRect()
 
         const cell_width = inline_rect.width / inline.textContent.length
-        next.columns.push(Math.floor(block_rect.width / cell_width))
+        const block_width = Math.min(block_rect.right, line_rect.right) - block_rect.left
+        next.columns.push(Math.floor(block_width / cell_width))
 
         if (block_rect.bottom <= root_rect.bottom) {
           if (h == H - 1) {
@@ -554,19 +547,19 @@ function activate(root, websocket, state) {
     info_hide: ['info'],
   }
 
-  websocket.onmessage = msg => {
-    const {jsonrpc, method, params} = JSON.parse(msg.data)
-    if (method == 'refresh') {
-      rAF(refresh)
-      rAF = x => 0
-      // window.requestAnimationFrame(refresh)
-    } else if (method in hides) {
-      hides[method].forEach(field => state[field] = undefined)
-    } else if (method in shows) {
-      state[shows[method]] = params
-    } else {
-      console.warn('unsupported', method, JSON.stringify(params))
-    }
+  websocket.onmessage = function on_message(msg) {
+    const messages = JSON.parse(msg.data)
+    messages.forEach(({method, params}) => {
+      if (method in hides) {
+        hides[method].forEach(field => state[field] = undefined)
+      } else if (method in shows) {
+        state[shows[method]] = params
+      } else {
+        console.warn('unsupported', method, JSON.stringify(params))
+      }
+    })
+    rAF(refresh)
+    rAF = x => 0
   }
 
   function send(method, ...params) {
@@ -610,57 +603,6 @@ function activate(root, websocket, state) {
       }
     }
   }
-
-  /*
-  function mouseoff() {
-    root.onmousemove = undefined
-  }
-
-  function where(e) {
-    for (const node of e.path) {
-      if (!node.getAttribute) {
-        continue
-      }
-      const line = node.getAttribute(DataLine)
-      const inline = node.querySelector('.' + ContentInline)
-      if (line && inline) {
-        // assume constant text width
-        const x = e.clientX - node.offsetLeft
-        const w = inline.clientWidth / inline.textContent.length
-        console.log(inline.clientWidth, inline.textContent.length)
-        console.log(node.offsetLeft, e.clientX)
-        console.log(w, x, 'x/w', x / w)
-        return [Number(line), Math.floor(x / w)]
-      }
-    }
-  }
-  function button(e) {
-    return e.button ? "right" : "left"
-  }
-  mouseoff()
-  root.onmousedown = e => {
-    if (e.button != 0) return // remove this to support right-click
-    e.preventDefault()
-    let pos
-    if (pos = where(e)) {
-      send("mouse", "press_" + button(e), ...pos)
-      root.onmousemove = e => {
-        e.preventDefault()
-        if (pos = where(e)) {
-          send("mouse", "move", ...pos)
-        }
-      }
-    }
-  }
-  root.onmouseup = e => {
-    e.preventDefault()
-    let pos
-    if (pos = where(e)) {
-      send("mouse", "release_" + button(e), ...pos)
-    }
-    mouseoff()
-  }
-  */
 }
 
 ;(k => {

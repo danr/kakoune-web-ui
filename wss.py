@@ -24,12 +24,17 @@ async def kak_json_websocket(request):
         limit=1024*1024*1024) # 1GB
 
     async def fwd():
+        buf = []
         async for message in kak.stdout:
             if websocket.closed:
                 kak.terminate()
                 await kak.wait()
                 break
-            await websocket.send_str(message.decode())
+            if message.startswith(b'{ "jsonrpc": "2.0", "method": "refresh"'):
+                await websocket.send_str('['+','.join(buf) + ']')
+                buf = []
+            else:
+                buf.append(message.decode())
 
     asyncio.create_task(fwd())
 
