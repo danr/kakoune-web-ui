@@ -322,8 +322,9 @@ function activate(root, websocket, state) {
       margin: 0;
     }
     pre, body {
-      font-size: 1.0rem;
+      font-size: 19px;
       font-family: Consolas;
+      letter-spacing: -0.025em;
     }
     body {
       margin: 0;
@@ -354,33 +355,48 @@ function activate(root, websocket, state) {
     }}))
 
 
-  function row_markup(default_face, k=()=>[]) {
-    const empty_row = [{face: {fg: "default", bg: "default"}, contents: ' '}]
-    const is_empty = row => !row || row.length == 1 && !row[0].contents
-    const ensure_nonempty = row => is_empty(row) ? empty_row : row
-    return function atoms_markup(row, line) { return ( // Thunk({row, line, default_face}, () =>
-      div(
-        cls(Line),
+  function markup_atoms(default_face, k=()=>false, offset=0) {
+    const empty_atom = [{face: {fg: "default", bg: "default"}, contents: ' '}]
+    const is_empty = atom => !atom || atom.length == 1 && !atom[0].contents
+    const ensure_nonempty = atom => is_empty(atom) ? empty_atom : atom
+    return function atoms_markup(atoms, line) {
+      const extra = k(atoms, line) || []
+      if (offset) {
+        atoms = atoms.slice()
+      }
+      let chopped = 0
+      while (atoms.length && chopped < offset) {
+        if (atoms[0].contents.length) {
+          atoms[0] = {...atoms[0]}
+          atoms[0].contents = atoms[0].contents.slice(1)
+          chopped++
+        } else {
+          atoms = atoms.slice(1)
+        }
+      }
+      return ( // Thunk({atoms, line, default_face}, () =>
         div(
-          cls(ContentBlock),
-          ...mouse_handlers(line, _ => atoms_text(row).length),
-          div(cls(ContentInline),
-            InlineFlexRowTop,
-            ...mouse_handlers(line, e => {
-              const node = e.currentTarget
-              const x = e.clientX - node.offsetLeft
-              const w = node.clientWidth / node.textContent.length // assuming constant width
-              return 1 + Math.floor(x / w)
-            }),
-            ...ensure_nonempty(row).map(cell =>
-              pre(
-                face_to_style(cell.face, default_face),
-                cell.contents.replace(/\n/g, ' ')
-              )))
-            ), // put inline menu here
-        ...(k(row, line) || []),
-        // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(row, 2, 2))
-      )
+          cls(Line),
+          div(
+            cls(ContentBlock),
+            ...mouse_handlers(line, _ => atoms_text(atoms).length),
+            div(cls(ContentInline),
+              InlineFlexRowTop,
+              ...mouse_handlers(line, e => {
+                const node = e.currentTarget
+                const x = e.clientX - node.offsetLeft
+                const w = node.clientWidth / node.textContent.length // assuming constant width
+                return Math.floor(x / w) + offset
+              }),
+              ...ensure_nonempty(atoms).map(cell =>
+                pre(
+                  face_to_style(cell.face, default_face),
+                  cell.contents.replace(/\n/g, ' ')
+                )))
+              ), // put inline menu here
+          ...extra,
+          // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(atoms, 2, 2))
+        )
     )}
   }
 
@@ -390,11 +406,66 @@ function activate(root, websocket, state) {
 
     rAF = k => window.requestAnimationFrame(k)
 
-    console.log(state.cursor && state.cursor[1])
+    // console.log(state.cursor && state.cursor[1])
+    // console.time('refresh')
+    // console.time('vdom')
 
     if (!state.main || !state.status) {
       return
     }
+
+    const [ui_options] = state.ui_options
+
+    if (!('neptyne_1' in ui_options) || !state.neptyne_lines) {
+      state.neptyne_lines = {}
+      state.seq_id = 0
+    }
+
+    Object.keys(ui_options).sort().forEach(k => {
+      const m = k.match(/^neptyne_(\d+)$/)
+      if (!m) {
+        return
+      }
+      const seq_id = Number(m[1])
+      if (seq_id <= state.seq_id) {
+        return
+      } else {
+        state.seq_id = seq_id
+      }
+      const content = ui_options[k]
+      const dec = window.atob(content)
+      try {
+        const obj = JSON.parse(dec)
+        try {
+          let {args, command, codepoint, line, seq_id, ...extra} = obj
+          if ('traceback' in extra) {
+            args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
+            // window.traceback = extra.traceback
+          }
+          if (command == 'executing') {
+            state.neptyne_lines[codepoint] = ''
+            state.seq_id = seq_id
+          } else {
+            if (args[0] !== undefined) {
+              const from_A = args[0].lastIndexOf('\u001b\[A')
+              const from_r = args[0].lastIndexOf('\r')
+              if (from_A != -1) {
+                state.neptyne_lines[codepoint] = args[0].slice(from_A+3)
+              } else if (from_r != -1) {
+                state.neptyne_lines[codepoint] = args[0].slice(from_r+1) + '\n'
+              } else {
+                state.neptyne_lines[codepoint] += args[0]
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e, obj)
+        }
+        // info_prompt = JSON.stringify(obj)
+      } catch (e) {
+        console.error(e, dec)
+      }
+    })
 
     const right_inline = node => [
       FlexRowTop,
@@ -405,28 +476,57 @@ function activate(root, websocket, state) {
 
     // this is the magic
     const [lines, default_face, padding_face] = state.main
-    const main = div(id(Main), bg(default_face), ...lines.map(row_markup(default_face,
-      (atoms, i) => atoms && atoms[0].face.fg == '#000001' &&
-        right_inline(pre(atoms.map(atom => JSON.stringify(atom)).join('\n'), css`
-            color:white;
-            padding:5px; padding-left: 8px;
+    const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
+    function adjust(atoms, i) {
+      if (atoms && pua(atoms[0].contents)) {
+        return [
+          FlexColumnLeft, css`align-items: stretch`,
+          pre(state.neptyne_lines[atoms[0].contents] || '', css`
+            color:${color_to_css('white')};
+            background: ${color_to_css('bright-green')};
+            padding:5px; padding-left: 7px;
+            margin: 5 5 -15 5px;
+            z-index: 1;
             border-left: 2px ${color_to_css('blue')} solid;
-            font-family: 'Source Serif Pro';
+            // margin-left: 1em;
+            // font-family: 'Source Serif Pro';
             max-height: 80%;
-            font-size: 1.1em;
+            // font-size: 1.1em;
             order:-1;
-          `))
-    )))
+          `)]
+      }
+    }
+    const offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
+    const rendered_lines = lines.map(markup_atoms(default_face, adjust, offset))
+    const main = div(id(Main), bg(default_face), ...rendered_lines)
 
     const [status_line, status_mode_line, status_default_face] = state.status
-    const status    = div(row_markup(status_default_face)(status_line))
-    const mode_line = div(row_markup(status_default_face)(status_mode_line))
+    const status    = div(markup_atoms(status_default_face)(status_line))
+    const mode_line = div(markup_atoms(status_default_face)(status_mode_line))
+
+    let info_prompt, info_inline
+    if (state.info) {
+      const [title, content, anchor, face, info_style] = state.info
+      const dom = div(css`padding: 6px`, face_to_style(face), pre(content))
+      if (info_style == 'prompt') {
+        if (title == 'jseval') {
+          // idea of Screwtape
+          info_prompt = eval(content)
+        } else {
+          info_prompt = dom
+        }
+      } else if (info_style == 'menuDoc') {
+        info_inline = dom
+      } else {
+        console.warn('Unsupported info style', info_style)
+      }
+    }
 
     let menu_inline, menu_prompt
     if (state.menu) {
       const [items, anchor, selected_face, face, menu_style] = state.menu
       const dom = items.slice(0, state.rows-3).map(
-        (item, i) => row_markup(
+        (item, i) => markup_atoms(
           i == (state.selected || [-1])[0] ? selected_face : face
         )(item)
       )
@@ -453,24 +553,6 @@ function activate(root, websocket, state) {
       }
     }
 
-    let info_prompt, info_inline
-    if (state.info) {
-      const [title, content, anchor, face, info_style] = state.info
-      const dom = div(css`padding: 6px`, face_to_style(face), pre(content))
-      if (info_style == 'prompt') {
-        if (title == 'jseval') {
-          // idea of Screwtape
-          info_prompt = eval(content)
-        } else {
-          info_prompt = dom
-        }
-      } else if (info_style == 'menuDoc') {
-        info_inline = dom
-      } else {
-        console.warn('Unsupported info style', info_style)
-      }
-    }
-
     const morph = div(
       id`root`,
       bg(padding_face),
@@ -481,16 +563,21 @@ function activate(root, websocket, state) {
       `,
       main,
       div(Left, css`width: 100vw`,
-        div(Left, FlexColumnLeft, css`z-index: 1`, menu_prompt, status),
-        div(Right, FlexColumnRight, info_prompt, mode_line)),
+        div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
+        div(Right, FlexColumnRight, css`z-index: 2`,info_prompt, mode_line)),
       menu_inline && div(FlexRowTop, menu_inline, info_inline),
       Tag('style', [state.sheet])
     )
 
+    // console.timeEnd('vdom')
+    // console.time('morph')
     morph(root)
+    // console.timeEnd('morph')
 
     function window_size() {
+      // console.time('window_size')
       const next = {}
+
       const lines = root.querySelectorAll(`#${Main} .${Line}`)
       if (!lines) return
       const root_rect = root.getBoundingClientRect()
@@ -499,6 +586,9 @@ function activate(root, websocket, state) {
       lines.forEach(function line_size(line, h) {
         const block = line.querySelector('.' + ContentBlock)
         const inline = line.querySelector('.' + ContentInline)
+        if (!block || !inline) {
+          return
+        }
         const line_rect = line.getBoundingClientRect()
         const block_rect = block.getBoundingClientRect()
         const inline_rect = inline.getBoundingClientRect()
@@ -507,7 +597,9 @@ function activate(root, websocket, state) {
         const block_width = Math.min(block_rect.right, line_rect.right) - block_rect.left
         next.columns.push(Math.floor(block_width / cell_width))
 
-        if (block_rect.bottom <= root_rect.bottom) {
+        const slack_bottom = line_rect.top + block_rect.height
+
+        if (slack_bottom <= root_rect.bottom) {
           if (h == H - 1) {
             const more = Math.floor((root_rect.bottom - line_rect.bottom) / block_rect.height)
             if (more >= 0) {
@@ -520,15 +612,19 @@ function activate(root, websocket, state) {
           }
         }
       })
-      next.cols = Math.min(...next.columns)
+      next.cols = Math.min(...next.columns) + offset
+
       if (next.cols != state.cols || next.rows != state.rows) {
         Object.assign(state, next)
         console.log('resize', state.rows, state.cols)
         send("resize", state.rows, state.cols)
       }
+      // console.timeEnd('window_size')
     }
 
+    // window.requestAnimationFrame(window_size)
     window_size()
+    // console.timeEnd('refresh')
   }
 
   refresh()
@@ -539,7 +635,8 @@ function activate(root, websocket, state) {
     menu_select: 'selected',
     draw: 'main',
     draw_status: 'status',
-    set_cursor: 'cursor'
+    set_cursor: 'cursor',
+    set_ui_options: 'ui_options'
   }
 
   const hides = {
@@ -632,6 +729,7 @@ function activate(root, websocket, state) {
     k()
   }
 })(() => {
+  console.clear()
   const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
   root.id = 'root'
   const state = window.state = (window.state || {})
