@@ -500,7 +500,8 @@ function activate(root, websocket, state) {
       if (atoms && pua(atoms[0].contents)) {
         const html = state.neptyne_html[atoms[0].contents]
         const lines = state.neptyne_lines[atoms[0].contents]
-        if (!html || !lines) return
+        console.log(html, lines, html ? html : lines)
+        if (!html && !lines) return
         return [
           FlexColumnLeft, css`align-items: stretch`,
           (html ? div : pre)(html ? html : lines, css`
