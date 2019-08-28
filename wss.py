@@ -13,7 +13,7 @@ routes = web.RouteTableDef()
 @routes.get('/kak/{session}')
 async def kak_json_websocket(request):
     print('request', request)
-    websocket = web.WebSocketResponse(compress=False)
+    websocket = web.WebSocketResponse()
     await websocket.prepare(request)
 
     session = request.match_info['session']
@@ -73,7 +73,7 @@ def root(request):
 @routes.get('/hot')
 async def hot_websocket(request):
     print('request', request)
-    websocket = web.WebSocketResponse(compress=False)
+    websocket = web.WebSocketResponse()
     await websocket.prepare(request)
 
     watcher = aionotify.Watcher()

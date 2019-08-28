@@ -418,6 +418,7 @@ function activate(root, websocket, state) {
 
     if (!('neptyne_1' in ui_options) || !state.neptyne_lines) {
       state.neptyne_lines = {}
+      state.neptyne_html = {}
       state.seq_id = 0
     }
 
@@ -442,21 +443,39 @@ function activate(root, websocket, state) {
             args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
             // window.traceback = extra.traceback
           }
-          if (command == 'executing') {
-            state.neptyne_lines[codepoint] = ''
-            state.seq_id = seq_id
-          } else {
-            if (args[0] !== undefined) {
-              const from_A = args[0].lastIndexOf('\u001b\[A')
-              const from_r = args[0].lastIndexOf('\r')
+          function text(s) {
+            if (s !== undefined) {
+              const from_A = s.lastIndexOf('\u001b\[A')
+              const from_r = s.lastIndexOf(/\r[^\n]/)
               if (from_A != -1) {
-                state.neptyne_lines[codepoint] = args[0].slice(from_A+3)
+                state.neptyne_lines[codepoint] = s.slice(from_A+3)
               } else if (from_r != -1) {
-                state.neptyne_lines[codepoint] = args[0].slice(from_r+1) + '\n'
+                state.neptyne_lines[codepoint] = s.slice(from_r+1) + '\n'
               } else {
-                state.neptyne_lines[codepoint] += args[0]
+                state.neptyne_lines[codepoint] += s
               }
             }
+          }
+          if (command == 'executing') {
+            state.neptyne_lines[codepoint] = ''
+            state.neptyne_html[codepoint] = null
+            state.seq_id = seq_id
+          } else if (command == 'data') {
+            const mimes = args[0]
+            console.log(mimes)
+            text(mimes['text/plain'])
+            if ('text/html' in mimes) {
+              const div = document.createElement('div')
+              div.innerHTML = mimes['text/html']
+              state.neptyne_html[codepoint] = div
+            }
+            if ('image/png' in mimes) {
+              const img = document.createElement('img')
+              img.src = 'data:image/png;base64,' + mimes['image/png']
+              state.neptyne_html[codepoint] = img
+            }
+          } else {
+            text(args[0])
           }
         } catch (e) {
           console.error(e, obj)
@@ -479,19 +498,23 @@ function activate(root, websocket, state) {
     const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
     function adjust(atoms, i) {
       if (atoms && pua(atoms[0].contents)) {
+        const html = state.neptyne_html[atoms[0].contents]
+        const lines = state.neptyne_lines[atoms[0].contents]
+        if (!html || !lines) return
         return [
           FlexColumnLeft, css`align-items: stretch`,
-          pre(state.neptyne_lines[atoms[0].contents] || '', css`
+          (html ? div : pre)(html ? html : lines, css`
             color:${color_to_css('white')};
-            background: ${color_to_css('bright-green')};
-            padding:5px; padding-left: 7px;
-            margin: 5 5 -15 5px;
+            background: linear-gradient(to bottom right, ${color_to_css('bright-green')} 20%, ${color_to_css('black')});
+            padding:0.4em;
+            padding-left:0.5em;
+            margin-bottom: -0.5em;
+            margin-top: 0.1em;
+            margin-left: 0.2em;
             z-index: 1;
-            border-left: 2px ${color_to_css('blue')} solid;
-            // margin-left: 1em;
-            // font-family: 'Source Serif Pro';
+            border-left: 0.1em ${color_to_css('blue')} solid;
             max-height: 80%;
-            // font-size: 1.1em;
+            font-size: 0.9em;
             order:-1;
           `)]
       }
