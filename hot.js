@@ -61,6 +61,8 @@ function Tag(name, children) {
         next_handlers[handler] = [value]
       }
       return false
+    } else if (isElement(child) && !child.foreign) {
+      throw new Error('DOM Element children needs to have prop foreign set to true')
     } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
       throw new Error('Child needs to be false, string, function or DOM Element')
     }
@@ -68,7 +70,8 @@ function Tag(name, children) {
   })
 
   return function morph(elem) {
-    if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase()) {
+    if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase() || elem.foreign) {
+      // need to create a new node if this is a FOREIGN OBJECT
       elem = document.createElement(name)
     }
     for (const attr of elem.attributes) {
@@ -323,8 +326,8 @@ function activate(root, websocket, state) {
     }
     pre, body {
       font-size: 19px;
-      font-family: Consolas;
-      letter-spacing: -0.025em;
+      font-family: 'Luxi Mono';
+      // letter-spacing: -0.025em;
     }
     body {
       margin: 0;
@@ -416,29 +419,25 @@ function activate(root, websocket, state) {
 
     const [ui_options] = state.ui_options
 
-    if (!('neptyne_1' in ui_options) || !state.neptyne_lines) {
-      state.neptyne_lines = {}
-      state.neptyne_html = {}
-      state.seq_id = 0
-    }
+    state.neptyne_lines = {}
+    state.neptyne_html = {}
 
     Object.keys(ui_options).sort().forEach(k => {
       const m = k.match(/^neptyne_(\d+)$/)
       if (!m) {
         return
       }
-      const seq_id = Number(m[1])
-      if (seq_id <= state.seq_id) {
-        return
-      } else {
-        state.seq_id = seq_id
-      }
+      const codepoint = Number(m[1])
       const content = ui_options[k]
+      if (content === '') {
+        return
+      }
       const dec = window.atob(content)
       try {
         const obj = JSON.parse(dec)
         try {
-          let {args, command, codepoint, line, seq_id, ...extra} = obj
+          let {args, command, line, ...extra} = obj
+          // console.log(obj)
           if ('traceback' in extra) {
             args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
             // window.traceback = extra.traceback
@@ -459,18 +458,20 @@ function activate(root, websocket, state) {
           if (command == 'executing') {
             state.neptyne_lines[codepoint] = ''
             state.neptyne_html[codepoint] = null
-            state.seq_id = seq_id
           } else if (command == 'data') {
             const mimes = args[0]
+            // Object.keys(mimes).length > 1
             console.log(mimes)
             text(mimes['text/plain'])
             if ('text/html' in mimes) {
               const div = document.createElement('div')
+              div.foreign = true
               div.innerHTML = mimes['text/html']
               state.neptyne_html[codepoint] = div
             }
             if ('image/png' in mimes) {
               const img = document.createElement('img')
+              img.foreign = true
               img.src = 'data:image/png;base64,' + mimes['image/png']
               state.neptyne_html[codepoint] = img
             }
@@ -478,7 +479,7 @@ function activate(root, websocket, state) {
             text(args[0])
           }
         } catch (e) {
-          console.error(e, obj)
+          console.error(e, dec)
         }
         // info_prompt = JSON.stringify(obj)
       } catch (e) {
@@ -498,9 +499,10 @@ function activate(root, websocket, state) {
     const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
     function adjust(atoms, i) {
       if (atoms && pua(atoms[0].contents)) {
-        const html = state.neptyne_html[atoms[0].contents]
-        const lines = state.neptyne_lines[atoms[0].contents]
-        console.log(html, lines, html ? html : lines)
+        const codepoint = atoms[0].contents.charCodeAt(0)
+        const html = state.neptyne_html[codepoint]
+        const lines = state.neptyne_lines[codepoint]
+        // console.log(html, lines, html ? html : lines)
         if (!html && !lines) return
         return [
           FlexColumnLeft, css`align-items: stretch`,
@@ -671,6 +673,9 @@ function activate(root, websocket, state) {
   websocket.onmessage = function on_message(msg) {
     const messages = JSON.parse(msg.data)
     messages.forEach(({method, params}) => {
+      if (method === 'set_ui_options') {
+        console.log(method, ...params)
+      }
       if (method in hides) {
         hides[method].forEach(field => state[field] = undefined)
       } else if (method in shows) {
