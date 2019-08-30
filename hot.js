@@ -438,11 +438,15 @@ function activate(root, websocket, state) {
         const codepoint = atoms[0].contents.charCodeAt(0)
         const html = state.neptyne_html[codepoint]
         const lines = state.neptyne_lines[codepoint]
-        // console.log(html, lines, html ? html : lines)
+        const status = state.neptyne_status[codepoint]
+        let border_colour = 'blue'
+        if (status == 'cancelled') border_colour = 'yellow'
+        if (status == 'executing') border_colour = 'green'
+        if (status == 'scheduled') border_colour = 'cyan'
         if (!html && !lines) return
         return [
           FlexColumnLeft, css`align-items: stretch`,
-          (html ? div : pre)(html ? html : lines, css`
+          (html ? div : pre)(html ? html : lines, cls(status), css`
             color:${color_to_css('white')};
             background: linear-gradient(to bottom right, ${color_to_css('bright-green')} 20%, ${color_to_css('black')});
             padding:0.4em;
@@ -451,7 +455,7 @@ function activate(root, websocket, state) {
             margin-top: 0.1em;
             margin-left: 0.2em;
             z-index: 1;
-            border-left: 0.1em ${color_to_css('blue')} solid;
+            border-left: 0.1em ${color_to_css(border_colour)} solid;
             max-height: 80%;
             font-size: 0.9em;
             order:-1;
@@ -591,12 +595,12 @@ function activate(root, websocket, state) {
 
   schedule_refresh()
 
-  state.neptyne_lines = {}
-  if (!state.neptyne_html) {
-    state.neptyne_html = {}
-  }
+  function update_flags() {
+    const ui_options = state.ui_options || {}
 
-  function update_flags(ui_options) {
+    state.neptyne_status = {}
+    state.neptyne_lines = {}
+    state.neptyne_html = {}
 
     Object.keys(ui_options).sort().forEach(k => {
       const m = k.match(/^neptyne_(\d+)$/)
@@ -610,16 +614,23 @@ function activate(root, websocket, state) {
       }
       const dec = window.atob(content)
       try {
-        const obj = JSON.parse(dec)
-        let {args, command, line, ...extra} = obj
-        // console.log(obj)
-        if ('traceback' in extra) {
-          args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
-          // window.traceback = extra.traceback
-        }
-        function text(s) {
-          if (s !== undefined) {
-            function go() {
+        const blob = JSON.parse(dec)
+        state.neptyne_status[codepoint] = blob.status
+        function with_msg(msg) {
+          const mimes = msg.data
+          if (mimes) {
+            if ('text/html' in mimes) {
+              const div = document.createElement('div')
+              div.foreign = true
+              div.innerHTML = mimes['text/html']
+              state.neptyne_html[codepoint] = div
+            } else if ('image/png' in mimes) {
+              const img = document.createElement('img')
+              img.foreign = true
+              img.src = 'data:image/png;base64,' + mimes['image/png']
+              state.neptyne_html[codepoint] = img
+            } else {
+              const s = mimes['text/plain'].replace(/\u001b\[[0-9;]*m/g, '')
               const from_A = s.lastIndexOf('\u001b\[A')
               const from_r = s.lastIndexOf(/\r[^\n]/)
               if (from_A != -1) {
@@ -627,54 +638,29 @@ function activate(root, websocket, state) {
               } else if (from_r != -1) {
                 state.neptyne_lines[codepoint] = s.slice(from_r+1) + '\n'
               } else {
-                state.neptyne_lines[codepoint] = s
+                state.neptyne_lines[codepoint] += s
               }
-            }
-            const old_html = state.neptyne_html[codepoint]
-            if (old_html) {
-              window.setTimeout(() => {
-                if (old_html === state.neptyne_html[codepoint]) {
-                  state.neptyne_html[codepoint] = null
-                  go()
-                  schedule_refresh()
-                }
-              }, 300)
-            } else {
-              go()
             }
           }
         }
-        if (command == 'executing') {
-          console.log('executing') // this is actually not sent atm
+        const nothing_yet = blob.status == 'executing' && blob.msgs.length == 0
+        const previous_images = (blob.prev_msgs || []).some(msg => 'image/png' in msg.data)
+        if (blob.msgs && !nothing_yet && !previous_images) {
           state.neptyne_lines[codepoint] = ''
           state.neptyne_html[codepoint] = null
-        } else if (command == 'data') {
-          const mimes = args[0]
-          // Object.keys(mimes).length > 1
-          // console.log(mimes)
-          if ('text/html' in mimes) {
-            const div = document.createElement('div')
-            div.foreign = true
-            div.innerHTML = mimes['text/html']
-            state.neptyne_html[codepoint] = div
-          } else if ('image/png' in mimes) {
-            const img = document.createElement('img')
-            img.foreign = true
-            img.src = 'data:image/png;base64,' + mimes['image/png']
-            state.neptyne_html[codepoint] = img
-          } else {
-            text(mimes['text/plain'])
-          }
-        } else if (command == 'error' || command == 'stream') {
-          text(args[0])
-        } else {
-          console.warn('unsupported flag method', command, args)
+          blob.msgs.forEach(with_msg)
+        } else if (blob.prev_msgs) {
+          state.neptyne_lines[codepoint] = ''
+          state.neptyne_html[codepoint] = null
+          blob.prev_msgs.forEach(with_msg)
         }
       } catch (e) {
         console.error(e, dec)
       }
     })
   }
+
+  update_flags()
 
   const shows = {
     menu_show: 'menu',
@@ -694,7 +680,8 @@ function activate(root, websocket, state) {
     const messages = JSON.parse(msg.data)
     messages.forEach(({method, params}) => {
       if (method === 'set_ui_options') {
-        update_flags(...params)
+        state.ui_options = params[0]
+        update_flags()
       } else if (method in hides) {
         hides[method].forEach(field => state[field] = undefined)
       } else if (method in shows) {
