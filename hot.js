@@ -405,7 +405,12 @@ function activate(root, websocket, state) {
 
   let rAF = k => window.requestAnimationFrame(k)
 
-  function refresh() {
+  function schedule_refresh() {
+    rAF(actual_refresh)
+    rAF = x => 0
+  }
+
+  function actual_refresh() {
 
     rAF = k => window.requestAnimationFrame(k)
 
@@ -417,75 +422,6 @@ function activate(root, websocket, state) {
       return
     }
 
-    const [ui_options] = state.ui_options
-
-    state.neptyne_lines = {}
-    state.neptyne_html = {}
-
-    Object.keys(ui_options).sort().forEach(k => {
-      const m = k.match(/^neptyne_(\d+)$/)
-      if (!m) {
-        return
-      }
-      const codepoint = Number(m[1])
-      const content = ui_options[k]
-      if (content === '') {
-        return
-      }
-      const dec = window.atob(content)
-      try {
-        const obj = JSON.parse(dec)
-        try {
-          let {args, command, line, ...extra} = obj
-          // console.log(obj)
-          if ('traceback' in extra) {
-            args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
-            // window.traceback = extra.traceback
-          }
-          function text(s) {
-            if (s !== undefined) {
-              const from_A = s.lastIndexOf('\u001b\[A')
-              const from_r = s.lastIndexOf(/\r[^\n]/)
-              if (from_A != -1) {
-                state.neptyne_lines[codepoint] = s.slice(from_A+3)
-              } else if (from_r != -1) {
-                state.neptyne_lines[codepoint] = s.slice(from_r+1) + '\n'
-              } else {
-                state.neptyne_lines[codepoint] += s
-              }
-            }
-          }
-          if (command == 'executing') {
-            state.neptyne_lines[codepoint] = ''
-            state.neptyne_html[codepoint] = null
-          } else if (command == 'data') {
-            const mimes = args[0]
-            // Object.keys(mimes).length > 1
-            console.log(mimes)
-            text(mimes['text/plain'])
-            if ('text/html' in mimes) {
-              const div = document.createElement('div')
-              div.foreign = true
-              div.innerHTML = mimes['text/html']
-              state.neptyne_html[codepoint] = div
-            }
-            if ('image/png' in mimes) {
-              const img = document.createElement('img')
-              img.foreign = true
-              img.src = 'data:image/png;base64,' + mimes['image/png']
-              state.neptyne_html[codepoint] = img
-            }
-          } else {
-            text(args[0])
-          }
-        } catch (e) {
-          console.error(e, dec)
-        }
-        // info_prompt = JSON.stringify(obj)
-      } catch (e) {
-        console.error(e, dec)
-      }
-    })
 
     const right_inline = node => [
       FlexRowTop,
@@ -642,7 +578,7 @@ function activate(root, websocket, state) {
 
       if (next.cols != state.cols || next.rows != state.rows) {
         Object.assign(state, next)
-        console.log('resize', state.rows, state.cols)
+        // console.log('resize', state.rows, state.cols)
         send("resize", state.rows, state.cols)
       }
       // console.timeEnd('window_size')
@@ -653,7 +589,92 @@ function activate(root, websocket, state) {
     // console.timeEnd('refresh')
   }
 
-  refresh()
+  schedule_refresh()
+
+  state.neptyne_lines = {}
+  if (!state.neptyne_html) {
+    state.neptyne_html = {}
+  }
+
+  function update_flags(ui_options) {
+
+    Object.keys(ui_options).sort().forEach(k => {
+      const m = k.match(/^neptyne_(\d+)$/)
+      if (!m) {
+        return
+      }
+      const codepoint = Number(m[1])
+      const content = ui_options[k]
+      if (content === '') {
+        return
+      }
+      const dec = window.atob(content)
+      try {
+        const obj = JSON.parse(dec)
+        let {args, command, line, ...extra} = obj
+        // console.log(obj)
+        if ('traceback' in extra) {
+          args = [extra.traceback.join('\n').replace(/\u001b\[[0-9;]*m/g, '')]
+          // window.traceback = extra.traceback
+        }
+        function text(s) {
+          if (s !== undefined) {
+            function go() {
+              const from_A = s.lastIndexOf('\u001b\[A')
+              const from_r = s.lastIndexOf(/\r[^\n]/)
+              if (from_A != -1) {
+                state.neptyne_lines[codepoint] = s.slice(from_A+3)
+              } else if (from_r != -1) {
+                state.neptyne_lines[codepoint] = s.slice(from_r+1) + '\n'
+              } else {
+                state.neptyne_lines[codepoint] = s
+              }
+            }
+            const old_html = state.neptyne_html[codepoint]
+            if (old_html) {
+              window.setTimeout(() => {
+                if (old_html === state.neptyne_html[codepoint]) {
+                  state.neptyne_html[codepoint] = null
+                  go()
+                  schedule_refresh()
+                }
+              }, 300)
+            } else {
+              go()
+            }
+          }
+        }
+        if (command == 'executing') {
+          console.log('executing') // this is actually not sent atm
+          state.neptyne_lines[codepoint] = ''
+          state.neptyne_html[codepoint] = null
+        } else if (command == 'data') {
+          const mimes = args[0]
+          // Object.keys(mimes).length > 1
+          // console.log(mimes)
+          if ('text/html' in mimes) {
+            const div = document.createElement('div')
+            div.foreign = true
+            div.innerHTML = mimes['text/html']
+            state.neptyne_html[codepoint] = div
+          } else if ('image/png' in mimes) {
+            const img = document.createElement('img')
+            img.foreign = true
+            img.src = 'data:image/png;base64,' + mimes['image/png']
+            state.neptyne_html[codepoint] = img
+          } else {
+            text(mimes['text/plain'])
+          }
+        } else if (command == 'error' || command == 'stream') {
+          text(args[0])
+        } else {
+          console.warn('unsupported flag method', command, args)
+        }
+      } catch (e) {
+        console.error(e, dec)
+      }
+    })
+  }
 
   const shows = {
     menu_show: 'menu',
@@ -662,7 +683,6 @@ function activate(root, websocket, state) {
     draw: 'main',
     draw_status: 'status',
     set_cursor: 'cursor',
-    set_ui_options: 'ui_options'
   }
 
   const hides = {
@@ -674,9 +694,8 @@ function activate(root, websocket, state) {
     const messages = JSON.parse(msg.data)
     messages.forEach(({method, params}) => {
       if (method === 'set_ui_options') {
-        console.log(method, ...params)
-      }
-      if (method in hides) {
+        update_flags(...params)
+      } else if (method in hides) {
         hides[method].forEach(field => state[field] = undefined)
       } else if (method in shows) {
         state[shows[method]] = params
@@ -684,8 +703,7 @@ function activate(root, websocket, state) {
         console.warn('unsupported', method, JSON.stringify(params))
       }
     })
-    rAF(refresh)
-    rAF = x => 0
+    schedule_refresh()
   }
 
   function send(method, ...params) {
@@ -715,7 +733,7 @@ function activate(root, websocket, state) {
     return false
   }
 
-  window.onresize = () => refresh()
+  window.onresize = () => schedule_refresh()
 
   window.onmousewheel = e => {
     // e.preventDefault()
