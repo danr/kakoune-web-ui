@@ -154,11 +154,12 @@ const id = MakeAttr('id')
 
 const Handler = handler => value => ({handler, value})
 
-const mousemove = Handler('mousemove')
-const mouseover = Handler('mouseover')
-const mousedown = Handler('mousedown')
-const mouseup   = Handler('mouseup')
-const click     = Handler('click')
+const mousemove  = Handler('mousemove')
+const mouseover  = Handler('mouseover')
+const mousedown  = Handler('mousedown')
+const mouseup    = Handler('mouseup')
+const mousewheel = Handler('mousewheel')
+const click      = Handler('click')
 
 function test_morphdom() {
   const tag = (name, ...children) => Tag(name, children)
@@ -456,10 +457,13 @@ function activate(root, websocket, state) {
             margin-left: 0.2em;
             z-index: 1;
             border-left: 0.1em ${color_to_css(border_colour)} solid;
-            max-height: 80%;
+            overflow: overlay;
+            max-height: 50vh;
             font-size: 0.9em;
             order:-1;
-          `)]
+          `,
+          mousewheel(e => e.stopPropagation()))
+        ]
       }
     }
     const offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
@@ -477,7 +481,13 @@ function activate(root, websocket, state) {
       if (info_style == 'prompt') {
         if (title == 'jseval') {
           // idea of Screwtape
-          info_prompt = eval(content)
+          const geval = eval
+          try {
+            geval(content)
+          } catch (e) {
+            console.error(e)
+          }
+          // info_prompt =
         } else {
           info_prompt = dom
         }
@@ -595,6 +605,8 @@ function activate(root, websocket, state) {
 
   schedule_refresh()
 
+  state.been_eval = {}
+
   function update_flags() {
     const ui_options = state.ui_options || {}
 
@@ -602,7 +614,7 @@ function activate(root, websocket, state) {
     state.neptyne_lines = {}
     state.neptyne_html = {}
 
-    Object.keys(ui_options).sort().forEach(k => {
+    Object.keys(ui_options).forEach(k => {
       const m = k.match(/^neptyne_(\d+)$/)
       if (!m) {
         return
@@ -615,22 +627,38 @@ function activate(root, websocket, state) {
       const dec = window.atob(content)
       try {
         const blob = JSON.parse(dec)
+        // console.log(blob)
         state.neptyne_status[codepoint] = blob.status
         function with_msg(msg) {
           const mimes = msg.data
           if (mimes) {
-            if ('text/html' in mimes) {
+            const html = mimes['text/html']
+            const svg = mimes['image/svg+xml']
+            const png = mimes['image/png']
+            const plain = mimes['text/plain']
+            const js = mimes['application/javascript']
+            if (js && blob.status == 'done' && !state.been_eval[blob.id]) {
+              state.been_eval[blob.id] = true
+              const geval = eval
+              try {
+                geval(js)
+              } catch (e) {
+                console.error(e)
+              }
+            } else if (html || svg) {
               const div = document.createElement('div')
+              div.style.background = 'white'
               div.foreign = true
-              div.innerHTML = mimes['text/html']
+              div.innerHTML = html || svg
               state.neptyne_html[codepoint] = div
-            } else if ('image/png' in mimes) {
+            } else if (png) {
               const img = document.createElement('img')
+              img.style.background = 'white'
               img.foreign = true
-              img.src = 'data:image/png;base64,' + mimes['image/png']
+              img.src = 'data:image/png;base64,' + png
               state.neptyne_html[codepoint] = img
-            } else {
-              const s = mimes['text/plain'].replace(/\u001b\[[0-9;]*m/g, '')
+            } else if (plain) {
+              const s = plain.replace(/\u001b\[[0-9;]*m/g, '')
               const from_A = s.lastIndexOf('\u001b\[A')
               const from_r = s.lastIndexOf(/\r[^\n]/)
               if (from_A != -1) {
@@ -644,7 +672,8 @@ function activate(root, websocket, state) {
           }
         }
         const nothing_yet = blob.status == 'executing' && blob.msgs.length == 0
-        const previous_images = (blob.prev_msgs || []).some(msg => 'image/png' in msg.data)
+        const is_image = msg => 'image/png' in msg.data || 'image/svg+xml' in msg.data
+        const previous_images = (blob.prev_msgs || []).some(is_image)
         if (blob.msgs && !nothing_yet && !previous_images) {
           state.neptyne_lines[codepoint] = ''
           state.neptyne_html[codepoint] = null

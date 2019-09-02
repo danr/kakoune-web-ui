@@ -62,7 +62,12 @@ def root(request):
     hot_ws.onmessage = function (msg) {
         'use strict';
         console.info('Reloading')
-        eval(msg.data)
+        const geval = eval
+        try {
+          geval(msg.data)
+        } catch (e) {
+          console.error(e)
+        }
     }
     </script></head>
     <body></body>
