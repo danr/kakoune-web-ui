@@ -326,9 +326,10 @@ function activate(root, websocket, state) {
       margin: 0;
     }
     pre, body {
-      font-size: 19px;
-      font-family: 'Luxi Mono';
-      // letter-spacing: -0.025em;
+      font-size: 22px;
+      // font-family: 'Luxi Mono';
+      font-family: 'Consolas';
+      letter-spacing: -0.025em;
     }
     body {
       margin: 0;
@@ -359,12 +360,12 @@ function activate(root, websocket, state) {
     }}))
 
 
-  function markup_atoms(default_face, k=()=>false, offset=0) {
+  function markup_atoms(default_face, k=()=>{}, offset=0) {
     const empty_atom = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = atom => !atom || atom.length == 1 && !atom[0].contents
     const ensure_nonempty = atom => is_empty(atom) ? empty_atom : atom
     return function atoms_markup(atoms, line) {
-      const extra = k(atoms, line) || []
+      const {line_extra, inline_extra} = k(atoms, line) || {}
       if (offset) {
         atoms = atoms.slice()
       }
@@ -377,6 +378,11 @@ function activate(root, websocket, state) {
         } else {
           atoms = atoms.slice(1)
         }
+      }
+      if (atoms_text(atoms).length == 0) {
+        atoms = atoms.slice()
+        const last = atoms[atoms.length - 1]
+        atoms[atoms.length - 1] = {...last, contents: '\n'}
       }
       return ( // Thunk({atoms, line, default_face}, () =>
         div(
@@ -396,9 +402,9 @@ function activate(root, websocket, state) {
                 pre(
                   face_to_style(cell.face, default_face),
                   cell.contents.replace(/\n/g, ' ')
-                )))
-              ), // put inline menu here
-          ...extra,
+                )),
+              ...(inline_extra || []))),
+          ...(line_extra || []),
           // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(atoms, 2, 2))
         )
     )}
@@ -431,49 +437,6 @@ function activate(root, websocket, state) {
       node
     ]
 
-    // this is the magic
-    const [lines, default_face, padding_face] = state.main
-    const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
-    function adjust(atoms, i) {
-      if (atoms && pua(atoms[0].contents)) {
-        const codepoint = atoms[0].contents.charCodeAt(0)
-        const html = state.neptyne_html[codepoint]
-        const lines = state.neptyne_lines[codepoint]
-        const status = state.neptyne_status[codepoint]
-        let border_colour = 'blue'
-        if (status == 'cancelled') border_colour = 'yellow'
-        if (status == 'executing') border_colour = 'green'
-        if (status == 'scheduled') border_colour = 'cyan'
-        if (!html && !lines) return
-        return [
-          FlexColumnLeft, css`align-items: stretch`,
-          (html ? div : pre)(html ? html : lines, cls(status), css`
-            color:${color_to_css('white')};
-            background: linear-gradient(to bottom right, ${color_to_css('bright-green')} 20%, ${color_to_css('black')});
-            padding:0.4em;
-            padding-left:0.5em;
-            margin-bottom: -0.5em;
-            margin-top: 0.1em;
-            margin-left: 0.2em;
-            z-index: 1;
-            border-left: 0.1em ${color_to_css(border_colour)} solid;
-            overflow: overlay;
-            max-height: 50vh;
-            font-size: 0.9em;
-            order:-1;
-          `,
-          mousewheel(e => e.stopPropagation()))
-        ]
-      }
-    }
-    const offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
-    const rendered_lines = lines.map(markup_atoms(default_face, adjust, offset))
-    const main = div(id(Main), bg(default_face), ...rendered_lines)
-
-    const [status_line, status_mode_line, status_default_face] = state.status
-    const status    = div(markup_atoms(status_default_face)(status_line))
-    const mode_line = div(markup_atoms(status_default_face)(status_mode_line))
-
     let info_prompt, info_inline
     if (state.info) {
       const [title, content, anchor, face, info_style] = state.info
@@ -498,10 +461,10 @@ function activate(root, websocket, state) {
       }
     }
 
-    let menu_inline, menu_prompt
+    let menu_dom, menu_prompt, menu_line
     if (state.menu) {
       const [items, anchor, selected_face, face, menu_style] = state.menu
-      const dom = items.slice(0, state.rows-3).map(
+      menu_dom = items.slice(0, state.rows-3).map(
         (item, i) => markup_atoms(
           i == (state.selected || [-1])[0] ? selected_face : face
         )(item)
@@ -511,23 +474,76 @@ function activate(root, websocket, state) {
           WideChildren,
           css`display: inline-block`,
           bg(face),
-          ...dom)
+          ...menu_dom)
       } else if (menu_style == 'inline') {
-        if (state.cell_height && state.cell_width) {
-          menu_inline = div(
-            WideChildren,
-            bg(face),
-            ...dom,
-            style`
-              position: absolute;
-              top: ${state.cell_height * (1 + anchor.line)}px;
-              left: ${state.cell_width * anchor.column}px;
-            `)
-        }
+        menu_line = anchor.line
       } else {
         console.warn('Unsupported menu style', menu_style)
       }
     }
+
+    const [lines, default_face, padding_face] = state.main
+    const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
+    function adjust(atoms, i) {
+      const line_extra = [], inline_extra = []
+      if (i == menu_line) {
+        console.log(i, menu_line)
+        const [items, anchor, selected_face, face, menu_style] = state.menu
+        inline_extra.push(
+          css`position: relative`,
+          div(
+            FlexRowTop,
+            div(WideChildren, ...menu_dom, bg(face), css`margin-right: 6px;`),
+            div(info_inline || false),
+            style`
+              position: absolute;
+              top: 100%;
+              left: ${(anchor.column - 1) / (atoms_text(atoms).length - 1) * 100}%;
+            `))
+      }
+      if (atoms && pua(atoms[0].contents)) {
+        const codepoint = atoms[0].contents.charCodeAt(0)
+        const html = state.neptyne_html[codepoint]
+        const lines = state.neptyne_lines[codepoint]
+        const status = state.neptyne_status[codepoint]
+        let border_colour = 'blue'
+        if (status == 'cancelled') border_colour = 'yellow'
+        if (status == 'executing') border_colour = 'green'
+        if (status == 'scheduled') border_colour = 'cyan'
+        if (html || lines) {
+          line_extra.push(
+            FlexColumnLeft,
+            css`align-items: stretch`,
+            (html ? div : pre)(
+              html ? html : lines,
+              cls(status),
+              mousewheel(e => e.stopPropagation()),
+              css`
+                color:${color_to_css('white')};
+                background: linear-gradient(to bottom right, ${color_to_css('bright-green')} 20%, ${color_to_css('black')});
+                padding:0.4em;
+                padding-left:0.5em;
+                margin-bottom: -0.5em;
+                margin-top: 0.1em;
+                margin-left: 0.2em;
+                z-index: 1;
+                border-left: 0.1em ${color_to_css(border_colour)} solid;
+                overflow: overlay;
+                max-height: 50vh;
+                font-size: 0.9em;
+                order:-1;
+              `))
+        }
+      }
+      return {line_extra, inline_extra}
+    }
+    const offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
+    const rendered_lines = lines.map(markup_atoms(default_face, adjust, offset))
+    const main = div(id(Main), bg(default_face), ...rendered_lines)
+
+    const [status_line, status_mode_line, status_default_face] = state.status
+    const status    = div(markup_atoms(status_default_face)(status_line))
+    const mode_line = div(markup_atoms(status_default_face)(status_mode_line))
 
     const morph = div(
       id`root`,
@@ -541,7 +557,7 @@ function activate(root, websocket, state) {
       div(Left, css`width: 100vw`,
         div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
         div(Right, FlexColumnRight, css`z-index: 2`,info_prompt, mode_line)),
-      menu_inline && div(FlexRowTop, menu_inline, info_inline),
+      // menu_inline && div(FlexRowTop, menu_inline, info_inline),
       Tag('style', [state.sheet])
     )
 
@@ -554,7 +570,7 @@ function activate(root, websocket, state) {
       // console.time('window_size')
       const next = {}
 
-      const lines = root.querySelectorAll(`#${Main} .${Line}`)
+      const lines = root.querySelectorAll(`#${Main} > .${Line}`)
       if (!lines) return
       const root_rect = root.getBoundingClientRect()
       next.columns = []
