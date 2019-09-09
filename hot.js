@@ -1,32 +1,6 @@
 const isElement = x => x instanceof Element
-
-function str_map(s, k) {
-  const out = []
-  for (let i = 0; i < s.length; ++i) {
-    out.push(k(s[i], i))
-  }
-  return out
-}
-
-function str_forEach(s, k) {
-  for (let i = 0; i < s.length; ++i) {
-    k(s[i], i)
-  }
-}
-
-function flat_map(xs, k) {
-  const out = []
-  xs.forEach((x, i) => out.push(...k(x, i)))
-  return out
-}
-
-function writer(h) {
-  const out = []
-  h((...xs) => out.push(...xs))
-  return out
-}
-
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
+const print = console.log
 
 function Thunk(key, create) {
   key = JSON.stringify(key)
@@ -321,6 +295,7 @@ function activate(root, websocket, state) {
             width: 100%;
           }
         `
+
   css`
     pre {
       margin: 0;
@@ -340,7 +315,6 @@ function activate(root, websocket, state) {
   const nonce = '-' + 'ABCXYZ'[((new Date).getTime() % 6)]
   const ContentInline = 'content-inline' + nonce
   const ContentBlock = 'content-block' + nonce
-  const DataLine = 'data-line' + nonce
   const Main = 'main' + nonce
   const Line = 'line' + nonce
 
@@ -384,7 +358,7 @@ function activate(root, websocket, state) {
         const last = atoms[atoms.length - 1]
         atoms[atoms.length - 1] = {...last, contents: '\n'}
       }
-      return ( // Thunk({atoms, line, default_face}, () =>
+      return (
         div(
           cls(Line),
           div(
@@ -487,7 +461,7 @@ function activate(root, websocket, state) {
     function adjust(atoms, i) {
       const line_extra = [], inline_extra = []
       if (i == menu_line) {
-        console.log(i, menu_line)
+        // console.log(i, menu_line)
         const [items, anchor, selected_face, face, menu_style] = state.menu
         inline_extra.push(
           css`position: relative`,
@@ -495,6 +469,7 @@ function activate(root, websocket, state) {
             FlexRowTop,
             div(WideChildren, ...menu_dom, bg(face), css`margin-right: 6px;`),
             div(info_inline || false),
+            css`z-index: 3`,
             style`
               position: absolute;
               top: 100%;
@@ -529,7 +504,7 @@ function activate(root, websocket, state) {
                 z-index: 1;
                 border-left: 0.1em ${color_to_css(border_colour)} solid;
                 overflow: overlay;
-                max-height: 50vh;
+                max-height: 80vh;
                 font-size: 0.9em;
                 order:-1;
               `))
@@ -664,6 +639,7 @@ function activate(root, websocket, state) {
             } else if (html || svg) {
               const div = document.createElement('div')
               div.style.background = 'white'
+              div.style.display = 'inline-block'
               div.foreign = true
               div.innerHTML = html || svg
               state.neptyne_html[codepoint] = div
