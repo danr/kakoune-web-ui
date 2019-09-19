@@ -104,7 +104,7 @@ loop = asyncio.get_event_loop()
 if not loop.is_running():
     import logging
     logging.basicConfig(level=logging.DEBUG)
-    web.run_app(app, host='127.0.0.1', port=8234)
+    web.run_app(app, host='127.0.0.1', port=8234, access_log_format='%t %a %s %r')
 else:
     if 'runner' in globals() and runner is not None:
         asyncio.ensure_future(runner.cleanup())

@@ -65,7 +65,7 @@ function color_to_css(name, fallback) {
 
 function activate(domdiff, root, websocket, state) {
 
-  const { div, pre, style, cls, id, class_cache } = domdiff
+  const { div, pre, style, cls, id, class_cache, mousewheel } = domdiff
 
   const {sheet, css, generate_class} = class_cache()
 
