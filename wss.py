@@ -12,7 +12,6 @@ routes = web.RouteTableDef()
 
 @routes.get('/kak/{session}')
 async def kak_json_websocket(request):
-    print('request', request)
     websocket = web.WebSocketResponse()
     await websocket.prepare(request)
 
@@ -23,6 +22,7 @@ async def kak_json_websocket(request):
         stdin=PIPE, stdout=PIPE,
         limit=1024*1024*1024) # 1GB
 
+    H = len('{ "jsonrpc": "2.0", "method": "refresh"')
     async def fwd():
         buf = []
         async for message in kak.stdout:
@@ -30,7 +30,7 @@ async def kak_json_websocket(request):
                 kak.terminate()
                 await kak.wait()
                 break
-            if message.startswith(b'{ "jsonrpc": "2.0", "method": "refresh"'):
+            if b'refresh' in message[0:H]:
                 await websocket.send_str('['+','.join(buf) + ']')
                 buf = []
             else:
@@ -48,49 +48,52 @@ async def kak_json_websocket(request):
 
 @routes.get('/sessions')
 async def kak_sessions(request):
-    print('request', request)
     kak = await asyncio.create_subprocess_exec('kak', '-l', stdout=PIPE)
     sessions = await kak.stdout.read()
     await kak.wait()
     return web.json_response({'sessions': sessions.decode().split()})
 
-@routes.get('/')
-def root(request):
-    text="""
-    <html><head><script>
-    window.hot_ws = new WebSocket('ws://' + window.location.host + '/hot')
-    hot_ws.onmessage = function (msg) {
-        'use strict';
-        console.info('Reloading')
-        const geval = eval
-        try {
-          geval(msg.data)
-        } catch (e) {
-          console.error(e)
-        }
-    }
-    </script></head>
-    <body></body>
-    </html>"""
-    print('request', request)
+def track(url):
+    url = repr('./' + url)
+    text=f"""
+    <html>
+    <head>
+    <script type="module" src="../static/track.js"></script>
+    </head>
+    <body onload=track({url})>
+    </body>
+    </html>
+    """
     return web.Response(text=text, content_type='text/html')
 
-@routes.get('/hot')
-async def hot_websocket(request):
+@routes.get('/track/{track}')
+def _track(request):
+    return track(request.match_info.get('track'))
+
+@routes.get('/')
+def root(request):
+    return track('kakoune.js')
+
+app.add_routes([
+    web.static('/static/', '.', show_index=True, append_version=True),
+    # web.static('/code/', '..', show_index=True, append_version=True)
+])
+
+@routes.get('/inotify')
+async def inotify_websocket(request):
     print('request', request)
     websocket = web.WebSocketResponse()
     await websocket.prepare(request)
 
     watcher = aionotify.Watcher()
-    watcher.watch(path='hot.js', flags=aionotify.Flags.MODIFY)
+    watcher.watch(path='.', flags=aionotify.Flags.MODIFY)
 
-    # Prepare the loop
     loop = asyncio.get_event_loop()
-
     await watcher.setup(loop)
     while True:
-        await websocket.send_str(open('hot.js', 'r').read())
-        await watcher.get_event()
+        event = await watcher.get_event()
+        print(event)
+        await websocket.send_str(event.name)
 
     watcher.close()
     return websocket
@@ -99,6 +102,8 @@ app.router.add_routes(routes)
 
 loop = asyncio.get_event_loop()
 if not loop.is_running():
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
     web.run_app(app, host='127.0.0.1', port=8234)
 else:
     if 'runner' in globals() and runner is not None:

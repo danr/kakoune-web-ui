@@ -1,253 +1,73 @@
-const isElement = x => x instanceof Element
+
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
-const print = console.log
 
-function Thunk(key, create) {
-  key = JSON.stringify(key)
-  return function thunk(elem) {
-    if (!elem || !isElement(elem) || elem.key != key) {
-      elem = create()(elem)
-      elem.key = key
-    }
-    return elem
+const NAMED_KEYS = {
+  Enter: "ret",
+  Tab: "tab",
+  Backspace: "backspace",
+  Delete: "del",
+  Escape: "esc",
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  PageUp: "pageup",
+  PageDown: "pagedown",
+  Home: "home",
+  End: "end",
+  F1: "f1",
+  F2: "f2",
+  F3: "f3",
+  F4: "f4",
+  F5: "f5",
+  F6: "f6",
+  F7: "f7",
+  F8: "f8",
+  F9: "f9",
+  F10: "f10",
+  F11: "f11",
+  F12: "f12",
+  '>': "gt",
+  '<': "lt",
+  '-': "minus",
+}
+
+// eighties
+const NAMED_COLOURS = {
+  'black':          '#2d2d2d',
+  'bright-green':   '#393939',
+  'bright-yellow':  '#515151',
+  'bright-black':   '#747369',
+  'bright-blue':    '#a09f93',
+  'white':          '#d3d0c8',
+  'bright-magenta': '#e8e6df',
+  'bright-white':   '#f2f0ec',
+  'red':            '#f2777a',
+  'bright-red':     '#f99157',
+  'yellow':         '#ffcc66',
+  'green':          '#99cc99',
+  'cyan':           '#66cccc',
+  'blue':           '#6699cc',
+  'magenta':        '#cc99cc',
+  'bright-cyan':    '#d27b53',
+}
+
+function color_to_css(name, fallback) {
+  // use class cache?
+  if (fallback && (name == 'default' || name == '')) {
+    return color_to_css(fallback)
+  } else if (name in NAMED_COLOURS) {
+    return NAMED_COLOURS[name]
+  } else {
+    return name
   }
 }
 
-function Tag(name, children) {
-  const next_attrs = {}
-  const next_handlers = {}
-  children = children.filter(function filter_child(child) {
-    if (!child) return false
-    const type = typeof child
-    if (type == 'object' && child.attr) {
-      const {attr, value} = child
-      if (attr in next_attrs) {
-        next_attrs[attr] += ' ' + value
-      } else {
-        next_attrs[attr] = value
-      }
-      return false
-    } else if (type == 'object' && child.handler) {
-      const {handler, value} = child
-      if (handler in next_handlers) {
-        next_handlers[handler].push(value)
-      } else {
-        next_handlers[handler] = [value]
-      }
-      return false
-    } else if (isElement(child) && !child.foreign) {
-      throw new Error('DOM Element children needs to have prop foreign set to true')
-    } else if (child && type != 'string' && type != 'function' && !isElement(child)) {
-      throw new Error('Child needs to be false, string, function or DOM Element')
-    }
-    return child
-  })
+function activate(domdiff, root, websocket, state) {
 
-  return function morph(elem) {
-    if (!elem || !isElement(elem) || elem.tagName != name.toUpperCase() || elem.foreign) {
-      // need to create a new node if this is a FOREIGN OBJECT
-      elem = document.createElement(name)
-    }
-    for (const attr of elem.attributes) {
-      if (!next_attrs[attr.name]) {
-        elem.removeAttribute(attr.name)
-      }
-    }
-    for (const attr in next_attrs) {
-      const now = elem.getAttribute(attr) || ''
-      const next = next_attrs[attr] || ''
-      if (now != next && next) {
-        elem.setAttribute(attr, next)
-      }
-    }
-    if (elem.handlers === undefined) {
-      elem.handlers = {}
-    }
-    for (const type in elem.handlers) {
-      if (!next_handlers[type]) {
-        elem.handlers[type] = undefined
-        elem['on' + type] = undefined
-      }
-    }
-    for (const type in next_handlers) {
-      if (!elem.handlers[type]) {
-        elem['on' + type] = e => e.currentTarget.handlers[type].forEach(h => h(e))
-      }
-      elem.handlers[type] = next_handlers[type]
-    }
-    while (elem.childNodes.length > children.length) {
-      elem.removeChild(elem.lastChild)
-    }
-    for (let i = 0; i < children.length; ++i) {
-      const child = children[i]
-      if (i < elem.childNodes.length) {
-        const prev = elem.childNodes[i]
-        let next = child
-        if (typeof child == 'function') {
-          next = child(prev)
-        } else if (typeof child == 'string') {
-          if (prev instanceof Text && prev.textContent == child) {
-            next = prev
-          } else {
-            next = document.createTextNode(child)
-          }
-        }
-        if (prev !== next) {
-          elem.replaceChild(next, prev)
-        }
-      } else {
-        elem.append(typeof child == 'function' ? child() : child)
-      }
-    }
-    return elem
-  }
-}
+  const { div, pre, style, cls, id, class_cache } = domdiff
 
-const MakeTag = name => (...children) => Tag(name, children)
-const div = MakeTag('div')
-const pre = MakeTag('pre')
-const code = MakeTag('code')
-const span = MakeTag('span')
-
-function template_to_string(value, ...more) {
-  if (typeof value == 'string') {
-    return value
-  }
-  return value.map((s, i) => s + (more[i] || '')).join('')
-}
-
-function forward(f, g) {
-  return (...args) => g(f(...args))
-}
-
-const MakeAttr = attr => forward(template_to_string, value => ({attr, value}))
-
-const style = MakeAttr('style')
-const cls = MakeAttr('class')
-const id = MakeAttr('id')
-
-const Handler = handler => value => ({handler, value})
-
-const mousemove  = Handler('mousemove')
-const mouseover  = Handler('mouseover')
-const mousedown  = Handler('mousedown')
-const mouseup    = Handler('mouseup')
-const mousewheel = Handler('mousewheel')
-const click      = Handler('click')
-
-function test_morphdom() {
-  const tag = (name, ...children) => Tag(name, children)
-  const tests = [
-    tag('div', cls`boo`, tag('pre', id`heh`, 'hello')),
-    tag('div', style`background: black`, 'hello'),
-    tag('div', cls`foo`, 'hello', tag('h1', 'heh')),
-    tag('div', cls`foo`, 'hello', tag('h2', 'heh')),
-    tag('div', cls`foo`, 'hello', tag('h2', 'meh')),
-    tag('span', tag('h1', 'a'), tag('h2', 'b')),
-    tag('span', tag('h1', 'a'), tag('h3', 'b')),
-    tag('span', tag('h2', 'a'), tag('h3', 'b')),
-    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'b')),
-    tag('span', cls`z`, id`g`, tag('h2', 'a'), 'zoo', tag('h3', 'b')),
-    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'b')),
-    tag('span', tag('h2', 'a'), 'zoo', tag('h3', 'boo')),
-    tag('span', 'apa'),
-    tag('span', tag('div', 'apa')),
-    tag('span', cls`a`),
-    tag('span', cls`b`),
-  ]
-
-  let now = undefined
-  console.group()
-  tests.forEach((morph, i) => {
-    now = morph(now)
-    console.log(now.outerHTML)
-  })
-  console.groupEnd()
-}
-// test_morphdom()
-
-function activate(root, websocket, state) {
-  const NAMED_KEYS = {
-    Enter: "ret",
-    Tab: "tab",
-    Backspace: "backspace",
-    Delete: "del",
-    Escape: "esc",
-    ArrowUp: "up",
-    ArrowDown: "down",
-    ArrowLeft: "left",
-    ArrowRight: "right",
-    PageUp: "pageup",
-    PageDown: "pagedown",
-    Home: "home",
-    End: "end",
-    F1: "f1",
-    F2: "f2",
-    F3: "f3",
-    F4: "f4",
-    F5: "f5",
-    F6: "f6",
-    F7: "f7",
-    F8: "f8",
-    F9: "f9",
-    F10: "f10",
-    F11: "f11",
-    F12: "f12",
-    '>': "gt",
-    '<': "lt",
-    '-': "minus",
-  }
-
-  // eighties
-  const NAMED_COLOURS = {
-    'black':          '#2d2d2d',
-    'bright-green':   '#393939',
-    'bright-yellow':  '#515151',
-    'bright-black':   '#747369',
-    'bright-blue':    '#a09f93',
-    'white':          '#d3d0c8',
-    'bright-magenta': '#e8e6df',
-    'bright-white':   '#f2f0ec',
-    'red':            '#f2777a',
-    'bright-red':     '#f99157',
-    'yellow':         '#ffcc66',
-    'green':          '#99cc99',
-    'cyan':           '#66cccc',
-    'blue':           '#6699cc',
-    'magenta':        '#cc99cc',
-    'bright-cyan':    '#d27b53',
-  }
-
-  function color_to_css(name, fallback) {
-    // use class cache?
-    if (fallback && (name == 'default' || name == '')) {
-      return color_to_css(fallback)
-    } else if (name in NAMED_COLOURS) {
-      return NAMED_COLOURS[name]
-    } else {
-      return name
-    }
-  }
-
-  state.sheet = ''
-
-  state.generated = new Map()
-
-  function generate_class(key, gen_code) {
-    if (!state.generated.has(key)) {
-      const code = gen_code().trim().replace(/\n\s*/g, '\n').replace(/[:{;]\s*/g, g => g[0])
-      const name = 'c' + state.generated.size // + '_' + code.trim().replace(/[^\w\d_-]+/g, '_')
-      state.generated.set(key, name)
-      if (-1 == code.search('{')) {
-        state.sheet += `.${name} {${code}}\n`
-      } else {
-        state.sheet += code.replace(/&/g, _ => `.${name}`) + '\n'
-      }
-    }
-    return {attr: 'class', value: state.generated.get(key)}
-  }
-
-  const css = forward(template_to_string, s => generate_class(s, () => s))
+  const {sheet, css, generate_class} = class_cache()
 
   function bg(face) {
     return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
@@ -386,7 +206,7 @@ function activate(root, websocket, state) {
 
   let rAF = k => window.requestAnimationFrame(k)
 
-  function schedule_refresh() {
+  window.schedule_refresh = function schedule_refresh() {
     rAF(actual_refresh)
     rAF = x => 0
   }
@@ -395,14 +215,9 @@ function activate(root, websocket, state) {
 
     rAF = k => window.requestAnimationFrame(k)
 
-    // console.log(state.cursor && state.cursor[1])
-    // console.time('refresh')
-    // console.time('vdom')
-
     if (!state.main || !state.status) {
       return
     }
-
 
     const right_inline = node => [
       FlexRowTop,
@@ -424,7 +239,7 @@ function activate(root, websocket, state) {
           } catch (e) {
             console.error(e)
           }
-          // info_prompt =
+          state.info = undefined
         } else {
           info_prompt = dom
         }
@@ -481,10 +296,13 @@ function activate(root, websocket, state) {
         const html = state.neptyne_html[codepoint]
         const lines = state.neptyne_lines[codepoint]
         const status = state.neptyne_status[codepoint]
-        let border_colour = 'blue'
-        if (status == 'cancelled') border_colour = 'yellow'
-        if (status == 'executing') border_colour = 'green'
-        if (status == 'scheduled') border_colour = 'cyan'
+        const colours = {
+          default: 'blue',
+          cancelled: 'yellow',
+          executing: 'green',
+          scheduled: 'cyan',
+        }
+        const border_colour = colours[status] || colours.default
         if (html || lines) {
           line_extra.push(
             FlexColumnLeft,
@@ -532,17 +350,12 @@ function activate(root, websocket, state) {
       div(Left, css`width: 100vw`,
         div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
         div(Right, FlexColumnRight, css`z-index: 2`,info_prompt, mode_line)),
-      // menu_inline && div(FlexRowTop, menu_inline, info_inline),
-      Tag('style', [state.sheet])
+      sheet
     )
 
-    // console.timeEnd('vdom')
-    // console.time('morph')
     morph(root)
-    // console.timeEnd('morph')
 
     function window_size() {
-      // console.time('window_size')
       const next = {}
 
       const lines = root.querySelectorAll(`#${Main} > .${Line}`)
@@ -583,22 +396,17 @@ function activate(root, websocket, state) {
 
       if (next.cols != state.cols || next.rows != state.rows) {
         Object.assign(state, next)
-        // console.log('resize', state.rows, state.cols)
         send("resize", state.rows, state.cols)
       }
-      // console.timeEnd('window_size')
     }
 
     // window.requestAnimationFrame(window_size)
     window_size()
-    // console.timeEnd('refresh')
   }
-
-  schedule_refresh()
 
   state.been_eval = {}
 
-  function update_flags() {
+  window.update_flags = function update_flags() {
     const ui_options = state.ui_options || {}
 
     state.neptyne_status = {}
@@ -628,7 +436,23 @@ function activate(root, websocket, state) {
             const png = mimes['image/png']
             const plain = mimes['text/plain']
             const js = mimes['application/javascript']
-            if (js && blob.status == 'done' && !state.been_eval[blob.id]) {
+            const viewers = window.viewers || {}
+            let view = {}
+            for (let name in viewers) {
+              try {
+                view = viewers[name](mimes, blob) || {}
+              } catch (e) {
+                console.warn(e)
+              }
+              if (view.dom || view.text) {
+                break
+              }
+            }
+            if (view.dom) {
+              state.neptyne_html[codepoint] = view.dom
+            } else if (view.text) {
+              state.neptyne_lines[codepoint] += view.text
+            } else if (js && blob.status == 'done' && !state.been_eval[blob.id]) {
               state.been_eval[blob.id] = true
               const geval = eval
               try {
@@ -680,8 +504,6 @@ function activate(root, websocket, state) {
       }
     })
   }
-
-  update_flags()
 
   const shows = {
     menu_show: 'menu',
@@ -755,39 +577,30 @@ function activate(root, websocket, state) {
       }
     }
   }
+
+  update_flags()
+  schedule_refresh()
 }
 
-;(k => {
+async function main() {
+  const domdiff = await reimport('./domdiff.js')
   if (typeof websocket == 'undefined' || websocket.readyState != websocket.OPEN) {
     try {
       if (typeof websocket != 'undefined') {
         websocket.close()
       }
     } catch { }
-    const xhr = new XMLHttpRequest()
-    xhr.open('GET', 'http://' + window.location.host + '/sessions')
-    xhr.responseType = 'json'
-    xhr.onload = function () {
-      if (xhr.readyState == 4) {
-        if (xhr.status === 200) {
-          const {sessions} = xhr.response
-          console.info('Sessions:', sessions)
-          window.websocket = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
-          k()
-        } else {
-          console.error(xhr.statusText)
-        }
-      }
-    }
-    xhr.send(null)
-  } else {
-    k()
+    const response = await fetch('http://' + window.location.host + '/sessions')
+    const {sessions} = await response.json()
+    console.info('Sessions:', ...sessions)
+    window.websocket = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
   }
-})(() => {
-  console.clear()
   const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
   root.id = 'root'
-  const state = window.state = (window.state || {})
-  activate(root, websocket, state)
-})
+  window.state = (window.state || {})
+  activate(domdiff, root, window.websocket, window.state)
+}
+
+main()
+
 
