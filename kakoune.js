@@ -211,6 +211,8 @@ function activate(domdiff, root, websocket, state) {
     rAF = x => 0
   }
 
+  state.first_paint = true
+
   function actual_refresh() {
 
     rAF = k => window.requestAnimationFrame(k)
@@ -293,9 +295,7 @@ function activate(domdiff, root, websocket, state) {
       }
       if (atoms && pua(atoms[0].contents)) {
         const codepoint = atoms[0].contents.charCodeAt(0)
-        const html = state.neptyne_html[codepoint]
-        const lines = state.neptyne_lines[codepoint]
-        const status = state.neptyne_status[codepoint]
+        const {dom, text, status} = state.neptyne_lines[codepoint]
         const colours = {
           default: 'blue',
           cancelled: 'yellow',
@@ -303,12 +303,12 @@ function activate(domdiff, root, websocket, state) {
           scheduled: 'cyan',
         }
         const border_colour = colours[status] || colours.default
-        if (html || lines) {
+        if (dom || text) {
           line_extra.push(
             FlexColumnLeft,
             css`align-items: stretch`,
-            (html ? div : pre)(
-              html ? html : lines,
+            (dom ? div : pre)(
+              dom ? dom : text,
               cls(status),
               mousewheel(e => e.stopPropagation()),
               css`
@@ -330,8 +330,8 @@ function activate(domdiff, root, websocket, state) {
       }
       return {line_extra, inline_extra}
     }
-    const offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
-    const rendered_lines = lines.map(markup_atoms(default_face, adjust, offset))
+    state.offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
+    const rendered_lines = lines.map(markup_atoms(default_face, adjust, state.offset))
     const main = div(id(Main), bg(default_face), ...rendered_lines)
 
     const [status_line, status_mode_line, status_default_face] = state.status
@@ -350,68 +350,135 @@ function activate(domdiff, root, websocket, state) {
       div(Left, css`width: 100vw`,
         div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
         div(Right, FlexColumnRight, css`z-index: 2`,info_prompt, mode_line)),
-      sheet
+      sheet()
     )
 
     morph(root)
 
-    function window_size() {
-      const next = {}
+    if (state.first_paint) {
+      state.first_paint = false
+      if (state.resize_observer) {
+        state.resize_observer.disconnect()
+      }
 
-      const lines = root.querySelectorAll(`#${Main} > .${Line}`)
-      if (!lines) return
-      const root_rect = root.getBoundingClientRect()
-      next.columns = []
-      const H = lines.length
-      lines.forEach(function line_size(line, h) {
-        const block = line.querySelector('.' + ContentBlock)
-        const inline = line.querySelector('.' + ContentInline)
-        if (!block || !inline) {
-          return
-        }
-        const line_rect = line.getBoundingClientRect()
-        const block_rect = block.getBoundingClientRect()
-        const inline_rect = inline.getBoundingClientRect()
+      state.resize_observer = new ResizeObserver(window_size)
+      state.resize_observer.observe(root)
+      state.resize_observer.observe(root.querySelector(`#${Main}`))
+    }
+  }
 
-        const cell_width = inline_rect.width / inline.textContent.length
-        const block_width = Math.min(block_rect.right, line_rect.right) - block_rect.left
-        next.columns.push(Math.floor(block_width / cell_width))
+  function window_size() {
+    const next = {}
 
-        const slack_bottom = line_rect.top + block_rect.height
+    const lines = root.querySelectorAll(`#${Main} > .${Line}`)
+    if (!lines) return
+    const root_rect = root.getBoundingClientRect()
+    const columns = []
+    const H = lines.length
+    lines.forEach(function line_size(line, h) {
+      const block = line.querySelector('.' + ContentBlock)
+      const inline = line.querySelector('.' + ContentInline)
+      if (!block || !inline) {
+        return
+      }
+      const line_rect = line.getBoundingClientRect()
+      const block_rect = block.getBoundingClientRect()
+      const inline_rect = inline.getBoundingClientRect()
 
-        if (slack_bottom <= root_rect.bottom) {
-          if (h == H - 1) {
-            const more = Math.floor((root_rect.bottom - line_rect.bottom) / block_rect.height)
-            if (more >= 0) {
-              next.rows = H + more
-            } else {
-              next.rows = h + 1
-            }
+      const cell_width = inline_rect.width / inline.textContent.length
+      const block_width = Math.min(block_rect.right, line_rect.right) - block_rect.left
+      columns.push(Math.floor(block_width / cell_width))
+
+      const slack_bottom = line_rect.top + block_rect.height
+
+      if (slack_bottom <= root_rect.bottom) {
+        if (h == H - 1) {
+          const more = Math.floor((root_rect.bottom - line_rect.bottom) / block_rect.height)
+          if (more >= 0) {
+            next.rows = H + more
           } else {
             next.rows = h + 1
           }
+        } else {
+          next.rows = h + 1
         }
-      })
-      next.cols = Math.min(...next.columns) + offset
+      }
+    })
+    next.cols = Math.min(...columns) + state.offset
 
-      if (next.cols != state.cols || next.rows != state.rows) {
-        Object.assign(state, next)
-        send("resize", state.rows, state.cols)
+    if (next.cols != state.cols || next.rows != state.rows) {
+      Object.assign(state, next)
+      send("resize", state.rows, state.cols)
+    }
+  }
+
+  state.neptyne_been_eval = {}
+
+  window.update_flags = function update_flags() {
+
+    function with_msg(blob, line, msg) {
+      const mimes = msg.data
+      if (mimes) {
+        const html = mimes['text/html']
+        const svg = mimes['image/svg+xml']
+        const png = mimes['image/png']
+        const plain = mimes['text/plain']
+        const js = mimes['application/javascript']
+        const viewers = window.viewers || {}
+        let view = {}
+        for (let name in viewers) {
+          try {
+            view = viewers[name](mimes, blob) || {}
+          } catch (e) {
+            console.warn(e)
+          }
+          if (view.dom || view.text) {
+            break
+          }
+        }
+        if (view.dom) {
+          line.dom = view.dom
+        } else if (view.text) {
+          line.text += view.text
+        } else if (js && blob.status == 'done' && !state.neptyne_been_eval[blob.id]) {
+          state.neptyne_been_eval[blob.id] = true
+          const geval = eval
+          try {
+            geval(js)
+          } catch (e) {
+            console.error(e)
+          }
+        } else if (html || svg) {
+          const div = document.createElement('div')
+          div.style.background = 'white'
+          div.style.display = 'inline-block'
+          div.foreign = true
+          div.innerHTML = html || svg
+          line.dom = div
+        } else if (png) {
+          const img = document.createElement('img')
+          img.style.background = 'white'
+          img.foreign = true
+          img.src = 'data:image/png;base64,' + png
+          line.dom = img
+        } else if (plain) {
+          const s = plain.replace(/\u001b\[[0-9;]*m/g, '')
+          const from_A = s.lastIndexOf('\u001b\[A')
+          const from_r = s.lastIndexOf(/\r[^\n]/)
+          if (from_A != -1) {
+            line.text = s.slice(from_A+3)
+          } else if (from_r != -1) {
+            line.text = s.slice(from_r+1) + '\n'
+          } else {
+            line.text += s
+          }
+        }
       }
     }
 
-    // window.requestAnimationFrame(window_size)
-    window_size()
-  }
-
-  state.been_eval = {}
-
-  window.update_flags = function update_flags() {
     const ui_options = state.ui_options || {}
 
-    state.neptyne_status = {}
     state.neptyne_lines = {}
-    state.neptyne_html = {}
 
     Object.keys(ui_options).forEach(k => {
       const m = k.match(/^neptyne_(\d+)$/)
@@ -427,77 +494,21 @@ function activate(domdiff, root, websocket, state) {
       try {
         const blob = JSON.parse(dec)
         // console.log(blob)
-        state.neptyne_status[codepoint] = blob.status
-        function with_msg(msg) {
-          const mimes = msg.data
-          if (mimes) {
-            const html = mimes['text/html']
-            const svg = mimes['image/svg+xml']
-            const png = mimes['image/png']
-            const plain = mimes['text/plain']
-            const js = mimes['application/javascript']
-            const viewers = window.viewers || {}
-            let view = {}
-            for (let name in viewers) {
-              try {
-                view = viewers[name](mimes, blob) || {}
-              } catch (e) {
-                console.warn(e)
-              }
-              if (view.dom || view.text) {
-                break
-              }
-            }
-            if (view.dom) {
-              state.neptyne_html[codepoint] = view.dom
-            } else if (view.text) {
-              state.neptyne_lines[codepoint] += view.text
-            } else if (js && blob.status == 'done' && !state.been_eval[blob.id]) {
-              state.been_eval[blob.id] = true
-              const geval = eval
-              try {
-                geval(js)
-              } catch (e) {
-                console.error(e)
-              }
-            } else if (html || svg) {
-              const div = document.createElement('div')
-              div.style.background = 'white'
-              div.style.display = 'inline-block'
-              div.foreign = true
-              div.innerHTML = html || svg
-              state.neptyne_html[codepoint] = div
-            } else if (png) {
-              const img = document.createElement('img')
-              img.style.background = 'white'
-              img.foreign = true
-              img.src = 'data:image/png;base64,' + png
-              state.neptyne_html[codepoint] = img
-            } else if (plain) {
-              const s = plain.replace(/\u001b\[[0-9;]*m/g, '')
-              const from_A = s.lastIndexOf('\u001b\[A')
-              const from_r = s.lastIndexOf(/\r[^\n]/)
-              if (from_A != -1) {
-                state.neptyne_lines[codepoint] = s.slice(from_A+3)
-              } else if (from_r != -1) {
-                state.neptyne_lines[codepoint] = s.slice(from_r+1) + '\n'
-              } else {
-                state.neptyne_lines[codepoint] += s
-              }
-            }
-          }
-        }
         const nothing_yet = blob.status == 'executing' && blob.msgs.length == 0
         const is_image = msg => 'image/png' in msg.data || 'image/svg+xml' in msg.data
         const previous_images = (blob.prev_msgs || []).some(is_image)
+        state.neptyne_lines[codepoint] = {
+          status: blob.status,
+          dom: null,
+          text: ''
+        }
+        const line = state.neptyne_lines[codepoint]
         if (blob.msgs && !nothing_yet && !previous_images) {
-          state.neptyne_lines[codepoint] = ''
-          state.neptyne_html[codepoint] = null
-          blob.msgs.forEach(with_msg)
+          blob.msgs.forEach(msg => with_msg(blob, line, msg))
         } else if (blob.prev_msgs) {
-          state.neptyne_lines[codepoint] = ''
-          state.neptyne_html[codepoint] = null
-          blob.prev_msgs.forEach(with_msg)
+          blob.prev_msgs.forEach(msg => with_msg(blob, line, msg))
+        } else {
+          line.text = undefined
         }
       } catch (e) {
         console.error(e, dec)

@@ -135,8 +135,7 @@ export const click      = Handler('click')
 
 export function class_cache(class_prefix='c') {
   const generated = new Map()
-  const sheet = document.createElement('style')
-  sheet.foreign = true
+  const lines = []
 
   function generate_class(key, gen_code) {
     if (!generated.has(key)) {
@@ -144,9 +143,9 @@ export function class_cache(class_prefix='c') {
       const name = class_prefix + generated.size // + '_' + code.trim().replace(/[^\w\d_-]+/g, '_')
       generated.set(key, name)
       if (-1 == code.search('{')) {
-        sheet.innerHTML += `.${name} {${code}}\n`
+        lines.push(`.${name} {${code}}\n`)
       } else {
-        sheet.innerHTML += code.replace(/&/g, _ => `.${name}`) + '\n'
+        lines.push(code.replace(/&/g, _ => `.${name}`) + '\n')
       }
     }
     return {attr: 'class', value: generated.get(key)}
@@ -154,7 +153,7 @@ export function class_cache(class_prefix='c') {
 
   const css = forward(template_to_string, s => generate_class(s, () => s))
 
-  return {sheet, css, generate_class}
+  return {sheet: () => Tag('style', lines), css, generate_class}
 }
 
 function test_morphdom() {
