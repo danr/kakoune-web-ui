@@ -54,25 +54,65 @@ async def kak_sessions(request):
     return web.json_response({'sessions': sessions.decode().split()})
 
 def track(url):
-    url = repr('./' + url)
+    url = repr(url)
+    track="""
+        "use strict";
+        {
+          let i = 0
+          const reimported = {}
+          const sloppy = s => s.replace(/.*\//g, '')
+          window.reimport = src => {
+            // console.log('Reimporting', src)
+            reimported[sloppy(src)] = true
+            return import('./static/' + src + '#' + i++)
+          }
+          const tracked = {}
+          window.track = src => {
+            if (!tracked[src]) {
+              console.log('Tracking', src)
+              tracked[src] = true;
+              reimport(src)
+            }
+          }
+          try {
+            if (window.track_ws.readyState != websocket.OPEN) {
+              window.track_ws.close()
+            }
+          } catch {}
+          const ws_url = 'ws://' + window.location.host + '/inotify'
+          window.track_ws = new WebSocket(ws_url)
+          window.track_ws.onmessage = msg => {
+            // console.log(sloppy(msg.data), ...Object.keys(reimported))
+            const upd = sloppy(msg.data)
+            if (reimported[upd]) {
+              Object.keys(tracked).forEach(src => {
+                console.log('Reloading', src, 'because', upd, 'was updated')
+                reimport(src)
+              })
+            }
+          }
+        }
+    """
     text=f"""
     <html>
     <head>
-    <script type="module" src="../static/track.js"></script>
+    <script type="module">
+        {track}
+        track({url})
+    </script>
     </head>
-    <body onload=track({url})>
-    </body>
+    <body></body>
     </html>
     """
     return web.Response(text=text, content_type='text/html')
 
-@routes.get('/track/{track}')
+@routes.get('/{track}.js')
 def _track(request):
-    return track(request.match_info.get('track'))
+    return track(request.match_info.get('track') + '.js')
 
 @routes.get('/')
 def root(request):
-    return track('kakoune.js')
+    return track('index.js')
 
 app.add_routes([
     web.static('/static/', '.', show_index=True, append_version=True),
@@ -104,7 +144,12 @@ loop = asyncio.get_event_loop()
 if not loop.is_running():
     import logging
     logging.basicConfig(level=logging.DEBUG)
-    web.run_app(app, host='127.0.0.1', port=8234, access_log_format='%t %a %s %r')
+    import sys
+    try:
+        port = int(sys.argv[1])
+    except:
+        port = 8234
+    web.run_app(app, host='127.0.0.1', port=port, access_log_format='%t %a %s %r')
 else:
     if 'runner' in globals() and runner is not None:
         asyncio.ensure_future(runner.cleanup())
