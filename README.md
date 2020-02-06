@@ -1,35 +1,28 @@
-# neptyne
+# kakoune web ui
 ​
 [![IRC][IRC Badge]][IRC]
 
-Editor-agnostic jupyter kernel interaction and [kakoune](http://kakoune.org) integration
+Run the kakoune text editor in your browser!
 
-Work in progress. Enjoy your tinkering around.
+This project is looking for a use-case and most likely a maintainer.
 
-## Setup using kakoune
+## Installation and usage
 
-Clone this repo somewhere and make sure kakoune sources it.
+```
+pip install . --user
+```
 
-You will need:
-* jupyter the python lib
-* ipython (or ijulia)
-* inotify
-* xterm
-* optional: jedi
-* optional: libsixel for images
-* optional: imagemagick for svg
+Run with
 
-## Usage from kakoune
+```
+kak-web-ui
+```
 
-Run the command `neptyne`, it will spawn an xterm for you.
+Now if you have a running kak session you can open it in your browser:
 
-The file `neptyne.kak` defines a few keybindings, most of them in insert mode.
-
-Note that the virtualenv you start kakoune in will be inherited from the xterm that is spawned.
-
-## Usage without kakoune
-
-Run `python /path/to/neptyne/neptyne.py your_file.py`.
+```
+chromium --app=http://localhost:8234
+```
 
 ## License
 

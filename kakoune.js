@@ -50,6 +50,23 @@ const NAMED_COLOURS = {
   'blue':           '#6699cc',
   'magenta':        '#cc99cc',
   'bright-cyan':    '#d27b53',
+} && {
+  'black':          'rgb(00.0%, 00.0%, 00.0%)',
+  'red':            'rgb(80.0%, 00.0%, 00.0%)',
+  'green':          'rgb(30.6%, 60.4%, 02.4%)',
+  'yellow':         'rgb(76.9%, 62.7%, 00.0%)',
+  'blue':           'rgb(20.4%, 39.6%, 64.3%)',
+  'magenta':        'rgb(45.9%, 31.4%, 48.2%)',
+  'cyan':           'rgb(02.4%, 59.6%, 60.4%)',
+  'white':          'rgb(82.7%, 84.3%, 81.2%)',
+  'bright-black':   'rgb(33.3%, 34.1%, 32.5%)',
+  'bright-red':     'rgb(93.7%, 16.1%, 16.1%)',
+  'bright-green':   'rgb(54.1%, 88.6%, 20.4%)',
+  'bright-yellow':  'rgb(98.8%, 91.4%, 31.0%)',
+  'bright-blue':    'rgb(44.7%, 62.4%, 81.2%)',
+  'bright-magenta': 'rgb(67.8%, 49.8%, 65.9%)',
+  'bright-cyan':    'rgb(20.4%, 88.6%, 88.6%)',
+  'bright-white':   'rgb(93.3%, 93.3%, 92.5%)',
 }
 
 function color_to_css(name, fallback) {
@@ -65,9 +82,9 @@ function color_to_css(name, fallback) {
 
 function activate(domdiff, root, websocket, state) {
 
-  const { div, pre, style, cls, id, class_cache, mousewheel } = domdiff
+  const {div, pre, style, cls, id, class_cache} = domdiff
 
-  const {sheet, css, generate_class} = class_cache()
+  const {css, generate_class} = class_cache()
 
   function bg(face) {
     return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
@@ -122,7 +139,6 @@ function activate(domdiff, root, websocket, state) {
     }
     pre, body {
       font-size: 22px;
-      // font-family: 'Luxi Mono';
       font-family: 'Consolas';
       letter-spacing: -0.025em;
     }
@@ -139,12 +155,12 @@ function activate(domdiff, root, websocket, state) {
   const Line = 'line' + nonce
 
   const mouse = [
-    {handler: 'mousedown', message: 'press_left'},
-    {handler: 'mousemove', message: 'move'},
-    {handler: 'mouseup', message: 'release_left'},
+    {handler: 'onmousedown', message: 'press_left'},
+    {handler: 'onmousemove', message: 'move'},
+    {handler: 'onmouseup', message: 'release_left'},
   ]
   const mouse_handlers = (line, what_col) =>
-    (line === undefined ? [] : mouse).map(({handler, message}) => ({handler, value: e => {
+    (line === undefined ? [] : mouse).map(({handler, message}) => ({[handler]: e => {
       if (!e.buttons || e.button) {
         return
       }
@@ -154,54 +170,34 @@ function activate(domdiff, root, websocket, state) {
     }}))
 
 
-  function markup_atoms(default_face, k=()=>{}, offset=0) {
+  function markup_atoms(default_face) {
     const empty_atom = [{face: {fg: "default", bg: "default"}, contents: ' '}]
     const is_empty = atom => !atom || atom.length == 1 && !atom[0].contents
     const ensure_nonempty = atom => is_empty(atom) ? empty_atom : atom
     return function atoms_markup(atoms, line) {
-      const {line_extra, inline_extra} = k(atoms, line) || {}
-      if (offset) {
-        atoms = atoms.slice()
-      }
-      let chopped = 0
-      while (atoms.length && chopped < offset) {
-        if (atoms[0].contents.length) {
-          atoms[0] = {...atoms[0]}
-          atoms[0].contents = atoms[0].contents.slice(1)
-          chopped++
-        } else {
-          atoms = atoms.slice(1)
-        }
-      }
-      if (atoms_text(atoms).length == 0) {
-        atoms = atoms.slice()
-        const last = atoms[atoms.length - 1]
-        atoms[atoms.length - 1] = {...last, contents: '\n'}
-      }
       return (
         div(
           cls(Line),
           div(
             cls(ContentBlock),
             ...mouse_handlers(line, _ => atoms_text(atoms).length),
-            div(cls(ContentInline),
+            div(
+              cls(ContentInline),
               InlineFlexRowTop,
               ...mouse_handlers(line, e => {
                 const node = e.currentTarget
                 const x = e.clientX - node.offsetLeft
                 const w = node.clientWidth / node.textContent.length // assuming constant width
-                return Math.floor(x / w) + offset
+                return Math.floor(x / w)
               }),
               ...ensure_nonempty(atoms).map(cell =>
                 pre(
                   face_to_style(cell.face, default_face),
                   cell.contents.replace(/\n/g, ' ')
-                )),
-              ...(inline_extra || []))),
-          ...(line_extra || []),
+                )))))
           // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(atoms, 2, 2))
         )
-    )}
+    }
   }
 
   let rAF = k => window.requestAnimationFrame(k)
@@ -231,7 +227,11 @@ function activate(domdiff, root, websocket, state) {
     let info_prompt, info_inline
     if (state.info) {
       const [title, content, anchor, face, info_style] = state.info
-      const dom = div(css`padding: 6px`, face_to_style(face), pre(content))
+      const dom = div(
+        css`padding: 6px`,
+        face_to_style(face),
+        ...content.map(markup_atoms(face)),
+      )
       if (info_style == 'prompt') {
         if (title == 'jseval') {
           // idea of Screwtape
@@ -274,64 +274,7 @@ function activate(domdiff, root, websocket, state) {
     }
 
     const [lines, default_face, padding_face] = state.main
-    const pua = x => x.length == 1 && x >= '\ue000' && x <= '\uf8ff'
-    function adjust(atoms, i) {
-      const line_extra = [], inline_extra = []
-      if (i == menu_line) {
-        // console.log(i, menu_line)
-        const [items, anchor, selected_face, face, menu_style] = state.menu
-        inline_extra.push(
-          css`position: relative`,
-          div(
-            FlexRowTop,
-            div(WideChildren, ...menu_dom, bg(face), css`margin-right: 6px;`),
-            div(info_inline || false),
-            css`z-index: 3`,
-            style`
-              position: absolute;
-              top: 100%;
-              left: ${(anchor.column - 1) / (atoms_text(atoms).length - 1) * 100}%;
-            `))
-      }
-      if (atoms && pua(atoms[0].contents)) {
-        const codepoint = atoms[0].contents.charCodeAt(0)
-        const {dom, text, status} = state.neptyne_lines[codepoint]
-        const colours = {
-          default: 'blue',
-          cancelled: 'yellow',
-          executing: 'green',
-          scheduled: 'cyan',
-        }
-        const border_colour = colours[status] || colours.default
-        if (dom || text) {
-          line_extra.push(
-            FlexColumnLeft,
-            css`align-items: stretch`,
-            (dom ? div : pre)(
-              dom ? dom : text,
-              cls(status),
-              mousewheel(e => e.stopPropagation()),
-              css`
-                color:${color_to_css('white')};
-                background: linear-gradient(to bottom right, ${color_to_css('bright-green')} 20%, ${color_to_css('black')});
-                padding:0.4em;
-                padding-left:0.5em;
-                margin-bottom: -0.5em;
-                margin-top: 0.1em;
-                margin-left: 0.2em;
-                z-index: 1;
-                border-left: 0.1em ${color_to_css(border_colour)} solid;
-                overflow: overlay;
-                max-height: 80vh;
-                font-size: 0.9em;
-                order:-1;
-              `))
-        }
-      }
-      return {line_extra, inline_extra}
-    }
-    state.offset = lines.some(atoms => atoms && pua(atoms[0].contents)) ? 1 : 0
-    const rendered_lines = lines.map(markup_atoms(default_face, adjust, state.offset))
+    const rendered_lines = lines.map(markup_atoms(default_face))
     const main = div(id(Main), bg(default_face), ...rendered_lines)
 
     const [status_line, status_mode_line, status_default_face] = state.status
@@ -349,8 +292,8 @@ function activate(domdiff, root, websocket, state) {
       main,
       div(Left, css`width: 100vw`,
         div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
-        div(Right, FlexColumnRight, css`z-index: 2`,info_prompt, mode_line)),
-      sheet()
+        div(Right, FlexColumnRight, css`z-index: 2`, info_prompt, mode_line),
+      )
     )
 
     morph(root)
@@ -404,116 +347,12 @@ function activate(domdiff, root, websocket, state) {
         }
       }
     })
-    next.cols = Math.min(...columns) + state.offset
+    next.cols = Math.min(...columns)
 
     if (next.cols != state.cols || next.rows != state.rows) {
       Object.assign(state, next)
       send("resize", state.rows, state.cols)
     }
-  }
-
-  state.neptyne_been_eval = {}
-
-  window.update_flags = function update_flags() {
-
-    function with_msg(blob, line, msg) {
-      const mimes = msg.data
-      if (mimes) {
-        const html = mimes['text/html']
-        const svg = mimes['image/svg+xml']
-        const png = mimes['image/png']
-        const plain = mimes['text/plain']
-        const js = mimes['application/javascript']
-        const viewers = window.viewers || {}
-        let view = {}
-        for (let name in viewers) {
-          try {
-            view = viewers[name](mimes, blob) || {}
-          } catch (e) {
-            console.warn(e)
-          }
-          if (view.dom || view.text) {
-            break
-          }
-        }
-        if (view.dom) {
-          line.dom = view.dom
-        } else if (view.text) {
-          line.text += view.text
-        } else if (js && blob.status == 'done' && !state.neptyne_been_eval[blob.id]) {
-          state.neptyne_been_eval[blob.id] = true
-          const geval = eval
-          try {
-            geval(js)
-          } catch (e) {
-            console.error(e)
-          }
-        } else if (html || svg) {
-          const div = document.createElement('div')
-          div.style.background = 'white'
-          div.style.display = 'inline-block'
-          div.foreign = true
-          div.innerHTML = html || svg
-          line.dom = div
-        } else if (png) {
-          const img = document.createElement('img')
-          img.style.background = 'white'
-          img.foreign = true
-          img.src = 'data:image/png;base64,' + png
-          line.dom = img
-        } else if (plain) {
-          const s = plain.replace(/\u001b\[[0-9;]*m/g, '')
-          const from_A = s.lastIndexOf('\u001b\[A')
-          const from_r = s.lastIndexOf(/\r[^\n]/)
-          if (from_A != -1) {
-            line.text = s.slice(from_A+3)
-          } else if (from_r != -1) {
-            line.text = s.slice(from_r+1) + '\n'
-          } else {
-            line.text += s
-          }
-        }
-      }
-    }
-
-    const ui_options = state.ui_options || {}
-
-    state.neptyne_lines = {}
-
-    Object.keys(ui_options).forEach(k => {
-      const m = k.match(/^neptyne_(\d+)$/)
-      if (!m) {
-        return
-      }
-      const codepoint = Number(m[1])
-      const content = ui_options[k]
-      if (content === '') {
-        return
-      }
-      const dec = window.atob(content)
-      try {
-        const blob = JSON.parse(dec)
-        // console.log(blob)
-        const nothing_yet = blob.status == 'executing' && blob.msgs.length == 0
-        const is_image = msg => 'image/png' in msg.data || 'image/svg+xml' in msg.data
-        const previous_images = (blob.prev_msgs || []).some(is_image)
-        state.neptyne_lines[codepoint] = {
-          status: blob.status,
-          dom: null,
-          text: ''
-        }
-        const line = state.neptyne_lines[codepoint]
-        if (blob.msgs && !nothing_yet && !previous_images) {
-          blob.msgs.forEach(msg => with_msg(blob, line, msg))
-        } else if (blob.prev_msgs) {
-          blob.prev_msgs.forEach(msg => with_msg(blob, line, msg))
-        } else {
-          line.text = undefined
-        }
-      } catch (e) {
-        console.error(e, dec)
-      }
-    })
   }
 
   const shows = {
@@ -534,8 +373,7 @@ function activate(domdiff, root, websocket, state) {
     const messages = JSON.parse(msg.data)
     messages.forEach(({method, params}) => {
       if (method === 'set_ui_options') {
-        state.ui_options = params[0]
-        update_flags()
+        // pass
       } else if (method in hides) {
         hides[method].forEach(field => state[field] = undefined)
       } else if (method in shows) {
@@ -578,18 +416,11 @@ function activate(domdiff, root, websocket, state) {
 
   window.onmousewheel = e => {
     // e.preventDefault()
-    if (!e.deltaX) {
-      // this is getting changed in kakoune 2359df0f
-      // send("scroll", e.deltaY)
-      if (e.deltaY < 0) {
-        send("mouse", "wheel_up", 0, 0)
-      } else {
-        send("mouse", "wheel_down", 0, 0)
-      }
+    if (e.deltaY) {
+      send("scroll", e.deltaY < 0 ? -1 : 1)
     }
   }
 
-  update_flags()
   schedule_refresh()
 }
 
