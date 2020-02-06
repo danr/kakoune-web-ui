@@ -22,7 +22,7 @@ setup(
     package_data={
         '.': ["*.js"],
     },
-    install_requires=[],
+    install_requires=[ r for r in open("requirements.txt").read().split('\n') if not r.startswith('#') ],
     long_description=long_description,
     classifiers=[
         "Programming Language :: Python",
