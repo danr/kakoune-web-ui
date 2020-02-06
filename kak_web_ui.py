@@ -151,3 +151,5 @@ def main():
         port = 8234
     web.run_app(app, host='127.0.0.1', port=port, access_log_format='%t %a %s %r')
 
+if __name__ == '__main__':
+    main()
