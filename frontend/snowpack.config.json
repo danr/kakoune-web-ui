@@ -1,0 +1,33 @@
+{
+  "mount": {
+    "public": "/",
+    "src": "/_dist_"
+  },
+  "plugins": [
+    "@snowpack/plugin-react-refresh",
+    "@snowpack/plugin-babel",
+    "@snowpack/plugin-dotenv"
+  ],
+  "installOptions": {
+    "polyfillNode": true
+  },
+  "devOptions": {
+    "port": 1235
+  },
+  "proxy": {
+    "/api": "http://localhost:8234/",
+    "/kak": {
+      "target": "http://localhost:8234/",
+      "ws": true
+    }
+  },
+  "alias": {
+    "@app": "./src"
+  },
+  "exclude": [
+    "**/node_modules/**/*",
+    "**/__tests__/*",
+    "**/*.@(spec|test).@(js|mjs)",
+    "**/*doctest*"
+  ]
+}

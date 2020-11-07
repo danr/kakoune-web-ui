@@ -1,3 +1,5 @@
+import React from 'react'
+import * as domdiff from './domdiff'
 
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
 
@@ -50,7 +52,7 @@ const NAMED_COLOURS = {
   'blue':           '#6699cc',
   'magenta':        '#cc99cc',
   'bright-cyan':    '#d27b53',
-} && {
+} || {
   'black':          'rgb(00.0%, 00.0%, 00.0%)',
   'red':            'rgb(80.0%, 00.0%, 00.0%)',
   'green':          'rgb(30.6%, 60.4%, 02.4%)',
@@ -202,7 +204,7 @@ function activate(domdiff, root, websocket, state) {
 
   let rAF = k => window.requestAnimationFrame(k)
 
-  window.schedule_refresh = function schedule_refresh() {
+  function schedule_refresh() {
     rAF(actual_refresh)
     rAF = x => 0
   }
@@ -402,6 +404,7 @@ function activate(domdiff, root, websocket, state) {
   }
 
   window.onkeydown = e => {
+    console.log(e)
     e.preventDefault()
     const key = e.key
     if (key in NAMED_KEYS) {
@@ -424,25 +427,41 @@ function activate(domdiff, root, websocket, state) {
   schedule_refresh()
 }
 
-async function main() {
-  const domdiff = await reimport('./domdiff.js')
-  if (typeof websocket == 'undefined' || websocket.readyState != websocket.OPEN) {
-    try {
-      if (typeof websocket != 'undefined') {
-        websocket.close()
-      }
-    } catch { }
-    const response = await fetch('http://' + window.location.host + '/sessions')
-    const {sessions} = await response.json()
-    console.info('Sessions:', ...sessions)
-    window.websocket = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
+declare global {
+  interface Window {
+    state: any
   }
-  const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'))
-  root.id = 'root'
-  window.state = (window.state || {})
-  activate(domdiff, root, window.websocket, window.state)
 }
 
-main()
 
+export function Kakoune() {
+  const [elem, set_elem] = React.useState(null as null | HTMLElement)
+  const [ws, set_ws] = React.useState(undefined as undefined | WebSocket)
+  React.useEffect(() => {
+    const make_ws = async () => {
+      const response = await fetch('http://' + window.location.host + '/api/sessions')
+      const {sessions} = await response.json()
+      console.info('Sessions:', ...sessions)
+      const ws = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
+      set_ws(ws)
+    }
+    make_ws()
+  }, [])
+  React.useEffect(() => {
+    return () => {
+      if (ws) {
+        ws.close()
+      }
+    }
+  }, [ws])
+  window.state = (window.state || {})
+  React.useEffect(() => {
+    if (elem && ws) {
+      activate(domdiff, elem, ws, window.state)
+    }
+  }, [elem, ws])
+  return (
+    <div ref={set_elem} />
+  )
+}
 
