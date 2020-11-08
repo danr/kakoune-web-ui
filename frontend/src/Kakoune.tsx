@@ -1,6 +1,6 @@
 import React from 'react'
 import {div, pre, css} from './div'
-import {css as emotion_css} from 'emotion'
+import {css as emotion_css, cx} from 'emotion'
 import {Global, css as core_css} from '@emotion/core'
 
 export function template_to_string(value: TemplateStringsArray | string, ...more: any[]) {
@@ -27,7 +27,7 @@ export const id = MakeAttr('id')
 
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
 
-const NAMED_KEYS = {
+const NAMED_KEYS: Record<string, string> = {
   Enter: 'ret',
   Tab: 'tab',
   Backspace: 'backspace',
@@ -137,18 +137,30 @@ function face_to_style(face, default_face = {}) {
   `
 }
 
+const Main = 'Main'
+const Line = 'Line'
+const ContentBlock = 'ContentBlock'
+const ContentInline = 'ContentInline'
+
 function Editor({websocket}: {websocket: WebSocket}) {
   const [state, set_state] = React.useState({} as any)
+  const [root, set_root] = React.useState(null as null | HTMLElement)
 
-  function send(method, ...params) {
-    const msg = {jsonrpc: '2.0', method, params}
-    // console.log(method, ...params)
-    websocket.send(JSON.stringify(msg))
-  }
-
-  // const {div, pre, style, cls, id, class_cache} = domdiff
-
-  // const {css, generate_class} = class_cache()
+  const send = React.useCallback(
+    function send(method, ...params) {
+      const msg = {jsonrpc: '2.0', method, params}
+      if (websocket.readyState == websocket.OPEN) {
+        websocket.send(JSON.stringify(msg))
+      } else if (websocket.readyState == websocket.CONNECTING) {
+        const prev = websocket.onopen
+        websocket.onopen = ev => {
+          prev && prev.bind(websocket)(ev)
+          websocket.send(JSON.stringify(msg))
+        }
+      }
+    },
+    [websocket]
+  )
 
   const Left = css`
     position: absolute;
@@ -186,19 +198,12 @@ function Editor({websocket}: {websocket: WebSocket}) {
     }
   `
 
-  const nonce = '-' + 'ABCXYZ'[new Date().getTime() % 6]
-  const ContentInline = 'content-inline' + nonce
-  const ContentBlock = 'content-block' + nonce
-  const Main = 'main' + nonce
-  const Line = 'line' + nonce
-
   const mouse = [
-    {handler: 'onmousedown', message: 'press_left'},
-    {handler: 'onmousemove', message: 'move'},
-    {handler: 'onmouseup', message: 'release_left'},
+    {handler: 'onMouseDown', message: 'press_left'},
+    {handler: 'onMouseMove', message: 'move'},
+    {handler: 'onMouseUp', message: 'release_left'},
   ]
   const mouse_handlers = (line, what_col) =>
-    [] ||
     (line === undefined ? [] : mouse).map(({handler, message}) => ({
       [handler]: e => {
         if (!e.buttons || e.button) {
@@ -216,12 +221,12 @@ function Editor({websocket}: {websocket: WebSocket}) {
     const ensure_nonempty = atom => (is_empty(atom) ? empty_atom : atom)
     return function atoms_markup(atoms, line) {
       return div(
-        cls(Line),
+        {className: Line},
         div(
-          cls(ContentBlock),
+          {className: ContentBlock},
           ...mouse_handlers(line, _ => atoms_text(atoms).length),
           div(
-            cls(ContentInline),
+            {className: ContentInline},
             InlineFlexRowTop,
             ...mouse_handlers(line, e => {
               const node = e.currentTarget
@@ -238,8 +243,6 @@ function Editor({websocket}: {websocket: WebSocket}) {
       // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(atoms, 2, 2))
     }
   }
-
-  state.first_paint = true
 
   function component() {
     if (!state.main || !state.status) {
@@ -315,65 +318,58 @@ function Editor({websocket}: {websocket: WebSocket}) {
 
     const [lines, default_face, padding_face] = state.main
     const rendered_lines = lines.map(markup_atoms(default_face))
-    const main = div(id(Main), bg(default_face), ...rendered_lines)
+    const main = div({className: Main}, bg(default_face), ...rendered_lines)
 
     const [status_line, status_mode_line, status_default_face] = state.status
     const status = div(markup_atoms(status_default_face)(status_line))
     const mode_line = div(markup_atoms(status_default_face)(status_mode_line))
 
-    return div(
-      bg(padding_face),
-      css`
-        height: 100vh;
-        width: 100vw;
-        overflow: hidden;
-      `,
-      main,
-      div(
-        Left,
-        css`
+    return (
+      <div
+        ref={div => set_root(div)}
+        className={cx(
+          emotion_css`
+          height: 100vh;
           width: 100vw;
+          overflow: hidden;
         `,
-        div(
+          bg(padding_face).css as string
+        )}>
+        {main}
+        {div(
           Left,
-          FlexColumnLeft,
           css`
-            z-index: 3;
+            width: 100vw;
           `,
-          menu_prompt,
-          status
-        ),
-        div(
-          Right,
-          FlexColumnRight,
-          css`
-            z-index: 2;
-          `,
-          info_prompt,
-          mode_line
-        )
-      )
+          div(
+            Left,
+            FlexColumnLeft,
+            css`
+              z-index: 3;
+            `,
+            menu_prompt,
+            status
+          ),
+          div(
+            Right,
+            FlexColumnRight,
+            css`
+              z-index: 2;
+            `,
+            info_prompt,
+            mode_line
+          )
+        )}
+      </div>
     )
-
-    if (state.first_paint) {
-      state.first_paint = false
-      if (state.resize_observer) {
-        state.resize_observer.disconnect()
-      }
-
-      state.resize_observer = new ResizeObserver(window_size)
-      state.resize_observer.observe(root)
-      state.resize_observer.observe(root.querySelector(`#${Main}`))
-    }
   }
 
-  function window_size() {
-    const next = {}
-
-    const lines = root.querySelectorAll(`#${Main} > .${Line}`)
+  function send_resize(root: HTMLElement) {
+    const lines = root.querySelectorAll(`.${Main} > .${Line}`)
     if (!lines) return
     const root_rect = root.getBoundingClientRect()
-    const columns = []
+    const columns: number[] = []
+    let next_rows = 0
     const H = lines.length
     lines.forEach(function line_size(line, h) {
       const block = line.querySelector('.' + ContentBlock)
@@ -385,7 +381,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
       const block_rect = block.getBoundingClientRect()
       const inline_rect = inline.getBoundingClientRect()
 
-      const cell_width = inline_rect.width / inline.textContent.length
+      const cell_width = inline_rect.width / (inline.textContent?.length || 1)
       const block_width = Math.min(block_rect.right, line_rect.right) - block_rect.left
       columns.push(Math.floor(block_width / cell_width))
 
@@ -395,22 +391,29 @@ function Editor({websocket}: {websocket: WebSocket}) {
         if (h == H - 1) {
           const more = Math.floor((root_rect.bottom - line_rect.bottom) / block_rect.height)
           if (more >= 0) {
-            next.rows = H + more
+            next_rows = H + more
           } else {
-            next.rows = h + 1
+            next_rows = h + 1
           }
         } else {
-          next.rows = h + 1
+          next_rows = h + 1
         }
       }
     })
-    next.cols = Math.min(...columns)
+    const next_cols = Math.min(...columns)
 
-    if (next.cols != state.cols || next.rows != state.rows) {
-      Object.assign(state, next)
-      send('resize', state.rows, state.cols)
-    }
+    send('resize', next_rows + 1, next_cols)
   }
+
+  React.useEffect(() => {
+    if (root) {
+      const obs = new ResizeObserver(entries => {
+        send_resize(entries[0].target)
+      })
+      obs.observe(root)
+      return () => obs.disconnect()
+    }
+  }, [root, send])
 
   const shows = {
     menu_show: 'menu',
@@ -454,7 +457,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
     }
 
     window.onkeydown = e => {
-      console.log(e)
+      // console.log(e)
       e.preventDefault()
       const key = e.key
       if (key in NAMED_KEYS) {
@@ -465,15 +468,13 @@ function Editor({websocket}: {websocket: WebSocket}) {
       return false
     }
 
-    window.onresize = () => set_state({...state})
-
     window.onmousewheel = e => {
       // e.preventDefault()
       if (e.deltaY) {
         send('scroll', e.deltaY < 0 ? -1 : 1)
       }
     }
-  }, [websocket])
+  }, [websocket, send])
 
   return (
     <>
