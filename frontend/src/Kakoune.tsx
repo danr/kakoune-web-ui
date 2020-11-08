@@ -1,5 +1,27 @@
 import React from 'react'
-import * as domdiff from './domdiff'
+import {div, pre, css} from './div'
+import {css as emotion_css} from 'emotion'
+import {Global, css as core_css} from '@emotion/core'
+
+export function template_to_string(value: TemplateStringsArray | string, ...more: any[]) {
+  if (typeof value == 'string' || typeof value == 'number') {
+    return value
+  }
+  return value.map((s, i) => s + (more[i] === undefined ? '' : more[i])).join('')
+}
+
+
+export function forward<Args extends any[], B, C>(f: (...args: Args) => B, g: (b: B) => C): (...args: Args) => C {
+  return (...args) => g(f(...args))
+}
+
+export function MakeAttr<Attr extends string>(attr: Attr) {
+  return forward(template_to_string, value => ({[attr]: value}))
+}
+
+export const style = MakeAttr('style')
+export const cls = MakeAttr('className')
+export const id = MakeAttr('id')
 
 const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
 
@@ -82,20 +104,49 @@ function color_to_css(name, fallback) {
   }
 }
 
-function activate(domdiff, root, websocket, state) {
+const global_style = {styles:
+  core_css`
+    pre {
+      margin: 0;
+    }
+    pre, body {
+      font-size: 22px;
+      font-family: 'Consolas';
+      letter-spacing: -0.025em;
+    }
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  `}
 
-  const {div, pre, style, cls, id, class_cache} = domdiff
 
-  const {css, generate_class} = class_cache()
+const GlobalStyle = () => <Global {...global_style} />
+
+function Editor({websocket}: {websocket: WebSocket}) {
+
+  const [state, set_state] = React.useState({} as any)
+
+  function send(method, ...params) {
+     const msg = { jsonrpc: "2.0", method, params }
+     // console.log(method, ...params)
+     websocket.send(JSON.stringify(msg))
+   }
+
+
+  // const {div, pre, style, cls, id, class_cache} = domdiff
+
+  // const {css, generate_class} = class_cache()
 
   function bg(face) {
-    return generate_class(face.bg, () => `background: ${color_to_css(face.bg, 'white')}`)
+
+    return css(`background: ${color_to_css(face.bg, 'white')}`)
   }
 
   function face_to_style(face, default_face={}) {
-    return generate_class(JSON.stringify([face, default_face]), () => `
+    return css(`
       color:${color_to_css(face.fg, default_face.fg)};
-      background:${color_to_css(face.bg, default_face.bg)}
+      background:${color_to_css(face.bg, default_face.bg)};
     `)
   }
 
@@ -135,22 +186,7 @@ function activate(domdiff, root, websocket, state) {
           }
         `
 
-  css`
-    pre {
-      margin: 0;
-    }
-    pre, body {
-      font-size: 22px;
-      font-family: 'Consolas';
-      letter-spacing: -0.025em;
-    }
-    body {
-      margin: 0;
-      overflow: hidden;
-    }
-  `
-
-  const nonce = '-' + 'ABCXYZ'[((new Date).getTime() % 6)]
+    const nonce = '-' + 'ABCXYZ'[((new Date).getTime() % 6)]
   const ContentInline = 'content-inline' + nonce
   const ContentBlock = 'content-block' + nonce
   const Main = 'main' + nonce
@@ -161,7 +197,7 @@ function activate(domdiff, root, websocket, state) {
     {handler: 'onmousemove', message: 'move'},
     {handler: 'onmouseup', message: 'release_left'},
   ]
-  const mouse_handlers = (line, what_col) =>
+  const mouse_handlers = (line, what_col) => [] ||
     (line === undefined ? [] : mouse).map(({handler, message}) => ({[handler]: e => {
       if (!e.buttons || e.button) {
         return
@@ -202,26 +238,17 @@ function activate(domdiff, root, websocket, state) {
     }
   }
 
-  let rAF = k => window.requestAnimationFrame(k)
-
-  function schedule_refresh() {
-    rAF(actual_refresh)
-    rAF = x => 0
-  }
-
   state.first_paint = true
 
-  function actual_refresh() {
-
-    rAF = k => window.requestAnimationFrame(k)
+  function component() {
 
     if (!state.main || !state.status) {
-      return
+      return <span>Nothing yet</span>
     }
 
     const right_inline = node => [
       FlexRowTop,
-      css`justify-content: space-between`,
+      css`justify-content: space-between;`,
       css`& > .${ContentBlock} { flex-grow: 1 }`,
       node
     ]
@@ -230,7 +257,7 @@ function activate(domdiff, root, websocket, state) {
     if (state.info) {
       const [title, content, anchor, face, info_style] = state.info
       const dom = div(
-        css`padding: 6px`,
+        css`padding: 6px;`,
         face_to_style(face),
         ...content.map(markup_atoms(face)),
       )
@@ -265,7 +292,7 @@ function activate(domdiff, root, websocket, state) {
       if (menu_style == 'prompt' || menu_style == 'search') {
         menu_prompt = div(
           WideChildren,
-          css`display: inline-block`,
+          css`display: inline-block;`,
           bg(face),
           ...menu_dom)
       } else if (menu_style == 'inline') {
@@ -283,8 +310,7 @@ function activate(domdiff, root, websocket, state) {
     const status    = div(markup_atoms(status_default_face)(status_line))
     const mode_line = div(markup_atoms(status_default_face)(status_mode_line))
 
-    const morph = div(
-      id`root`,
+    return div(
       bg(padding_face),
       css`
         height: 100vh;
@@ -292,13 +318,11 @@ function activate(domdiff, root, websocket, state) {
         overflow: hidden;
       `,
       main,
-      div(Left, css`width: 100vw`,
-        div(Left, FlexColumnLeft, css`z-index: 3`, menu_prompt, status),
-        div(Right, FlexColumnRight, css`z-index: 2`, info_prompt, mode_line),
+      div(Left, css`width: 100vw;`,
+        div(Left, FlexColumnLeft, css`z-index: 3;`, menu_prompt, status),
+        div(Right, FlexColumnRight, css`z-index: 2;`, info_prompt, mode_line),
       )
     )
-
-    morph(root)
 
     if (state.first_paint) {
       state.first_paint = false
@@ -371,71 +395,62 @@ function activate(domdiff, root, websocket, state) {
     info_hide: ['info'],
   }
 
-  websocket.onmessage = function on_message(msg) {
-    const messages = JSON.parse(msg.data)
-    messages.forEach(({method, params}) => {
-      if (method === 'set_ui_options') {
-        // pass
-      } else if (method in hides) {
-        hides[method].forEach(field => state[field] = undefined)
-      } else if (method in shows) {
-        state[shows[method]] = params
-      } else {
-        console.warn('unsupported', method, JSON.stringify(params))
+  React.useEffect(() => {
+    websocket.onmessage = function on_message(msg) {
+      const messages = JSON.parse(msg.data)
+      messages.forEach(({method, params}) => {
+        if (method === 'set_ui_options') {
+          // pass
+        } else if (method in hides) {
+          hides[method].forEach(field => state[field] = undefined)
+        } else if (method in shows) {
+          state[shows[method]] = params
+        } else {
+          console.warn('unsupported', method, JSON.stringify(params))
+        }
+      })
+      set_state({...state})
+    }
+
+    function mod(k, e) {
+      let s = k
+      if (e.altKey) s = 'a-' + s;
+      if (e.ctrlKey) s = 'c-' + s;
+      if (s == 'c-i') s = 'tab';
+      if (e.shiftKey && s == 'tab') s = 's-tab';
+      if (s == 'c-h') s = 'backspace';
+      return s.length == 1 ? s : `<${s}>`
+    }
+
+    window.onkeydown = e => {
+      console.log(e)
+      e.preventDefault()
+      const key = e.key
+      if (key in NAMED_KEYS) {
+        send("keys", mod(NAMED_KEYS[key], e))
+      } else if (key.length == 1) {
+        send("keys", mod(key, e))
       }
-    })
-    schedule_refresh()
-  }
-
-  function send(method, ...params) {
-    const msg = { jsonrpc: "2.0", method, params }
-    // console.log(method, ...params)
-    websocket.send(JSON.stringify(msg))
-  }
-
-  function mod(k, e) {
-    let s = k
-    if (e.altKey) s = 'a-' + s;
-    if (e.ctrlKey) s = 'c-' + s;
-    if (s == 'c-i') s = 'tab';
-    if (e.shiftKey && s == 'tab') s = 's-tab';
-    if (s == 'c-h') s = 'backspace';
-    return s.length == 1 ? s : `<${s}>`
-  }
-
-  window.onkeydown = e => {
-    console.log(e)
-    e.preventDefault()
-    const key = e.key
-    if (key in NAMED_KEYS) {
-      send("keys", mod(NAMED_KEYS[key], e))
-    } else if (key.length == 1) {
-      send("keys", mod(key, e))
+      return false
     }
-    return false
-  }
 
-  window.onresize = () => schedule_refresh()
+    window.onresize = () => set_state({...state})
 
-  window.onmousewheel = e => {
-    // e.preventDefault()
-    if (e.deltaY) {
-      send("scroll", e.deltaY < 0 ? -1 : 1)
+    window.onmousewheel = e => {
+      // e.preventDefault()
+      if (e.deltaY) {
+        send("scroll", e.deltaY < 0 ? -1 : 1)
+      }
     }
-  }
+  }, [websocket])
 
-  schedule_refresh()
+  return <>
+    <GlobalStyle />
+    {component()}
+  </>
 }
-
-declare global {
-  interface Window {
-    state: any
-  }
-}
-
 
 export function Kakoune() {
-  const [elem, set_elem] = React.useState(null as null | HTMLElement)
   const [ws, set_ws] = React.useState(undefined as undefined | WebSocket)
   React.useEffect(() => {
     const make_ws = async () => {
@@ -443,6 +458,7 @@ export function Kakoune() {
       const {sessions} = await response.json()
       console.info('Sessions:', ...sessions)
       const ws = new WebSocket('ws://' + window.location.host + '/kak/' + sessions[0])
+      console.log('ws:', ws)
       set_ws(ws)
     }
     make_ws()
@@ -450,18 +466,13 @@ export function Kakoune() {
   React.useEffect(() => {
     return () => {
       if (ws) {
+        console.log('closing ws')
         ws.close()
       }
     }
   }, [ws])
-  window.state = (window.state || {})
-  React.useEffect(() => {
-    if (elem && ws) {
-      activate(domdiff, elem, ws, window.state)
-    }
-  }, [elem, ws])
   return (
-    <div ref={set_elem} />
+    ws ? <Editor websocket={ws} /> : null
   )
 }
 
