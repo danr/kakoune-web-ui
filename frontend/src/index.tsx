@@ -2,9 +2,7 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import {Kakoune} from './Kakoune'
 
-const root = (
-  <Kakoune />
-)
+const root = <Kakoune />
 
 ReactDOM.render(root, document.getElementById('root'))
 

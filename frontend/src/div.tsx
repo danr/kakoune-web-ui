@@ -32,7 +32,10 @@ export function css(
 export type DivProps = {key?: string} & {css?: unknown} & React.HTMLAttributes<HTMLDivElement> &
   React.RefAttributes<HTMLDivElement>
 
-export function Tag<TagName extends string>(tagName: TagName, ...args: (DivProps | {css: unknown} | React.ReactNode)[]) {
+export function Tag<TagName extends string>(
+  tagName: TagName,
+  ...args: (DivProps | {css: unknown} | React.ReactNode)[]
+) {
   const props: Record<string, any> = {
     children: [],
     css: [],
@@ -80,17 +83,15 @@ export function Tag<TagName extends string>(tagName: TagName, ...args: (DivProps
   if (props_css.length) {
     return (
       <ClassNames key={key}>
-        {({css, cx}) => (
-          React.createElement(tagName,
-            {
-              ...normal_props,
-              className: cx(
-                normal_props.className,
-                props_css.map((xs: any[]) => css(...xs))
-              )
-            }
-          )
-        )}
+        {({css, cx}) =>
+          React.createElement(tagName, {
+            ...normal_props,
+            className: cx(
+              normal_props.className,
+              props_css.map((xs: any[]) => css(...xs))
+            ),
+          })
+        }
       </ClassNames>
     )
   } else {
@@ -105,4 +106,3 @@ export function div(...args: (DivProps | {css: unknown} | React.ReactNode)[]) {
 export function pre(...args: (DivProps | {css: unknown} | React.ReactNode)[]) {
   return Tag('pre', ...args)
 }
-
