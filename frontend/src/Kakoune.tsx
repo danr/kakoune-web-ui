@@ -25,8 +25,6 @@ export const style = MakeAttr('style')
 export const cls = MakeAttr('className')
 export const id = MakeAttr('id')
 
-const atoms_text = atoms => atoms.map(atom => atom.contents).join('')
-
 const NAMED_KEYS: Record<string, string> = {
   Enter: 'ret',
   Tab: 'tab',
@@ -59,7 +57,7 @@ const NAMED_KEYS: Record<string, string> = {
 }
 
 // eighties
-const NAMED_COLOURS = {
+const NAMED_COLOURS: Record<string, string> = {
   black: '#2d2d2d',
   'bright-green': '#393939',
   'bright-yellow': '#515151',
@@ -95,7 +93,20 @@ const NAMED_COLOURS = {
   'bright-white': 'rgb(93.3%, 93.3%, 92.5%)',
 }
 
-function color_to_css(name, fallback) {
+interface Face {
+  fg: string
+  bg: string
+  attributes: string[]
+}
+
+interface Atom {
+  face: Face
+  contents: string
+}
+
+const atoms_text = (atoms: Atom[]) => atoms.map(atom => atom.contents).join('')
+
+function color_to_css(name: string, fallback?: string): string {
   // use class cache?
   if (fallback && (name == 'default' || name == '')) {
     return color_to_css(fallback)
@@ -112,7 +123,7 @@ const global_style = {
       margin: 0;
     }
     pre, body {
-      font-size: 22px;
+      font-size: 12px;
       font-family: 'Consolas';
       letter-spacing: -0.025em;
     }
@@ -126,14 +137,14 @@ const global_style = {
 
 const GlobalStyle = () => <Global {...global_style} />
 
-function bg(face) {
+function bg(face: Face) {
   return css(`background: ${color_to_css(face.bg, 'white')}`)
 }
 
-function face_to_style(face, default_face = {}) {
+function face_to_style(face: Face, default_face?: Face) {
   return css`
-    color: ${color_to_css(face.fg, default_face.fg)};
-    background: ${color_to_css(face.bg, default_face.bg)};
+    color: ${color_to_css(face.fg, (default_face || {}).fg)};
+    background: ${color_to_css(face.bg, (default_face || {}).bg)};
   `
 }
 
@@ -203,9 +214,9 @@ function Editor({websocket}: {websocket: WebSocket}) {
     {handler: 'onMouseMove', message: 'move'},
     {handler: 'onMouseUp', message: 'release_left'},
   ]
-  const mouse_handlers = (line, what_col) =>
+  const mouse_handlers = (line: number, what_col: (e: MouseEvent) => void) =>
     (line === undefined ? [] : mouse).map(({handler, message}) => ({
-      [handler]: e => {
+      [handler]: (e: MouseEvent) => {
         if (!e.buttons || e.button) {
           return
         }
@@ -215,11 +226,11 @@ function Editor({websocket}: {websocket: WebSocket}) {
       },
     }))
 
-  function markup_atoms(default_face) {
-    const empty_atom = [{face: {fg: 'default', bg: 'default'}, contents: ' '}]
-    const is_empty = atom => !atom || (atom.length == 1 && !atom[0].contents)
-    const ensure_nonempty = atom => (is_empty(atom) ? empty_atom : atom)
-    return function atoms_markup(atoms, line) {
+  function markup_atoms(default_face: Face) {
+    const empty_atom = [{face: {fg: 'default', bg: 'default', attributes: []}, contents: ' '}]
+    const is_empty = (atoms: Atom[]) => !atoms || (atoms.length == 1 && !atoms[0].contents)
+    const ensure_nonempty = (atoms: Atom[]) => (is_empty(atoms) ? empty_atom : atoms)
+    return function atoms_markup(atoms: Atom[], line: number) {
       return div(
         {className: Line},
         div(
@@ -230,8 +241,11 @@ function Editor({websocket}: {websocket: WebSocket}) {
             InlineFlexRowTop,
             ...mouse_handlers(line, e => {
               const node = e.currentTarget
+              if (!node || !(node instanceof HTMLElement)) {
+                return
+              }
               const x = e.clientX - node.offsetLeft
-              const w = node.clientWidth / node.textContent.length // assuming constant width
+              const w = node.clientWidth / (node.textContent || ' ').length // assuming constant width
               return Math.floor(x / w)
             }),
             ...ensure_nonempty(atoms).map(cell =>
@@ -240,7 +254,6 @@ function Editor({websocket}: {websocket: WebSocket}) {
           )
         )
       )
-      // pre(css`display:none;color:white;font-size:0.8em`, JSON.stringify(atoms, 2, 2))
     }
   }
 
@@ -248,19 +261,6 @@ function Editor({websocket}: {websocket: WebSocket}) {
     if (!state.main || !state.status) {
       return <span>Nothing yet</span>
     }
-
-    const right_inline = node => [
-      FlexRowTop,
-      css`
-        justify-content: space-between;
-      `,
-      css`
-        & > .${ContentBlock} {
-          flex-grow: 1;
-        }
-      `,
-      node,
-    ]
 
     let info_prompt, info_inline
     if (state.info) {
@@ -273,18 +273,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
         ...content.map(markup_atoms(face))
       )
       if (info_style == 'prompt') {
-        if (title == 'jseval') {
-          // idea of Screwtape
-          const geval = eval
-          try {
-            geval(content)
-          } catch (e) {
-            console.error(e)
-          }
-          state.info = undefined
-        } else {
-          info_prompt = dom
-        }
+        info_prompt = dom
       } else if (info_style == 'menuDoc') {
         info_inline = dom
       } else {
@@ -332,8 +321,8 @@ function Editor({websocket}: {websocket: WebSocket}) {
           height: 100vh;
           width: 100vw;
           overflow: hidden;
-        `,
-          bg(padding_face).css as string
+          ${bg(padding_face).css as any}
+        `
         )}>
         {main}
         {div(
@@ -415,7 +404,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
     }
   }, [root, send])
 
-  const shows = {
+  const shows: Record<string, string> = {
     menu_show: 'menu',
     info_show: 'info',
     menu_select: 'selected',
@@ -424,15 +413,20 @@ function Editor({websocket}: {websocket: WebSocket}) {
     set_cursor: 'cursor',
   }
 
-  const hides = {
+  const hides: Record<string, string[]> = {
     menu_hide: ['menu', 'selected'],
     info_hide: ['info'],
   }
 
   React.useEffect(() => {
     websocket.onmessage = function on_message(msg) {
-      const messages = JSON.parse(msg.data)
+      interface Message {
+        method: string
+        params: any[]
+      }
+      const messages: Message[] = JSON.parse(msg.data)
       messages.forEach(({method, params}) => {
+        // method === 'draw' || console.log(JSON.stringify({method, params}, undefined, 2).slice(0, 400))
         if (method === 'set_ui_options') {
           // pass
         } else if (method in hides) {
@@ -446,7 +440,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
       set_state({...state})
     }
 
-    function mod(k, e) {
+    function mod(k: string, e: KeyboardEvent) {
       let s = k
       if (e.altKey) s = 'a-' + s
       if (e.ctrlKey) s = 'c-' + s
@@ -456,7 +450,7 @@ function Editor({websocket}: {websocket: WebSocket}) {
       return s.length == 1 ? s : `<${s}>`
     }
 
-    window.onkeydown = e => {
+    const onkeydown = (e: KeyboardEvent) => {
       // console.log(e)
       e.preventDefault()
       const key = e.key
@@ -468,11 +462,19 @@ function Editor({websocket}: {websocket: WebSocket}) {
       return false
     }
 
-    window.onmousewheel = e => {
+    const onmousewheel = (e: Event) => {
       // e.preventDefault()
-      if (e.deltaY) {
+      if (e instanceof WheelEvent && e.deltaY) {
         send('scroll', e.deltaY < 0 ? -1 : 1)
       }
+    }
+
+    window.addEventListener('keydown', onkeydown)
+    window.addEventListener('mousewheel', onmousewheel)
+
+    return () => {
+      window.removeEventListener('keydown', onkeydown)
+      window.removeEventListener('mousewheel', onmousewheel)
     }
   }, [websocket, send])
 
